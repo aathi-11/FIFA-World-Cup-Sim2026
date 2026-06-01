@@ -1,18 +1,43 @@
 import React, { useState } from 'react';
-import type { Team, Player, Match, GroupStanding, SimulationSummary, TeamSimStats } from '../types';
-import { Play, RotateCcw, BarChart3, HelpCircle, Trophy, Layers } from 'lucide-react';
+import type { Team, Player, Match, GroupStanding, SimulationSummary, TeamSimStats, GoldenBootPlayer } from '../types';
+import { Play, RotateCcw, BarChart3, Trophy, Layers, Lock, Unlock, Zap } from 'lucide-react';
 import { runFullTournamentSimulation, runMonteCarloSimulation } from '../utils/simulation';
+
+// ChartJS registration
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Tooltip,
+  Legend
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
 interface TournamentSimulatorProps {
   teams: Team[];
   playersDb: Record<string, Player[]>;
+  lockedMatches?: Record<string, Match>;
+  onToggleLockMatch?: (matchId: string, homeTeamId: string, awayTeamId: string, goalsHome: number, goalsAway: number) => void;
+  onClearLocks?: () => void;
 }
 
-export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams, playersDb }) => {
+export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ 
+  teams, 
+  playersDb,
+  lockedMatches = {},
+  onToggleLockMatch,
+  onClearLocks
+}) => {
   const [simMode, setSimMode] = useState<'SINGLE' | 'MONTE_CARLO'>('SINGLE');
   const [isSimulating, setIsSimulating] = useState(false);
   const [progress, setProgress] = useState(0);
   
+  // Local temporary inputs for locks
+  const [lockScores, setLockScores] = useState<Record<string, { goalsHome: number; goalsAway: number }>>({});
+
   // Single Run States
   const [singleResult, setSingleResult] = useState<{
     matches: Match[];
@@ -40,14 +65,13 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
   });
 
   const getTeam = (id: string): Team => teams.find(t => t.id === id) || {
-    id, name: id, group: 'A', elo: 1500, fifaRank: 100, sqi: 50, flag: '❓', recentForm: [], stars: 1
+    id, name: id, group: 'A', elo: 1500, baselineElo: 1500, fifaRank: 100, sqi: 50, flag: '❓', recentForm: [], stars: 1
   };
 
   const handleSingleSimulation = () => {
     setIsSimulating(true);
-    // Simulate a brief delay for suspense
     setTimeout(() => {
-      const res = runFullTournamentSimulation(teams, playersDb);
+      const res = runFullTournamentSimulation(teams, playersDb, lockedMatches);
       setSingleResult({
         ...res,
         simulated: true
@@ -60,9 +84,13 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
     setIsSimulating(true);
     setProgress(0);
     
-    // Break up execution using setTimeout to let the UI render the progress bar
+    // Reset goalsScored accumulation before Monte Carlo starts
+    Object.values(playersDb).forEach(squad => {
+      squad.forEach(p => { p.goalsScored = 0; });
+    });
+
     setTimeout(() => {
-      const summary = runMonteCarloSimulation(teams, playersDb, runs, (pct) => {
+      const summary = runMonteCarloSimulation(teams, playersDb, runs, lockedMatches, (pct) => {
         setProgress(pct);
       });
       
@@ -93,10 +121,108 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
     setProgress(0);
   };
 
-  // Helper to extract matches for a specific stage
   const getMatchesForStage = (stage: Match['stage']) => {
     return singleResult.matches.filter(m => m.stage === stage);
   };
+
+  // Local helper to change inputs before locking
+  const handleInputChange = (matchId: string, side: 'home' | 'away', val: number) => {
+    setLockScores(prev => {
+      const current = prev[matchId] || { goalsHome: 0, goalsAway: 0 };
+      return {
+        ...prev,
+        [matchId]: {
+          ...current,
+          goalsHome: side === 'home' ? val : current.goalsHome,
+          goalsAway: side === 'away' ? val : current.goalsAway
+        }
+      };
+    });
+  };
+
+  // Top 10 goalscorers compiled across Monte Carlo runs
+  const getGoldenBootLeaderboard = (): GoldenBootPlayer[] => {
+    if (!mcResult.simulated || !mcResult.summary) return [];
+    
+    const allPlayers: GoldenBootPlayer[] = [];
+    Object.keys(playersDb).forEach(teamId => {
+      const team = getTeam(teamId);
+      playersDb[teamId].forEach(p => {
+        if (p.goalsScored && p.goalsScored > 0) {
+          allPlayers.push({
+            playerId: p.id,
+            name: p.name,
+            teamId: team.id,
+            teamName: team.name,
+            teamFlag: team.flag,
+            goals: Math.round(p.goalsScored * mcResult.summary!.simulationsRun),
+            avgGoals: p.goalsScored
+          });
+        }
+      });
+    });
+
+    return allPlayers
+      .sort((a, b) => b.avgGoals - a.avgGoals)
+      .slice(0, 10);
+  };
+
+  const topScorers = getGoldenBootLeaderboard();
+
+  // ChartJS Data setup
+  const chartData = {
+    labels: mcResult.sortedStats.slice(0, 12).map(s => getTeam(s.teamId).name),
+    datasets: [
+      {
+        label: 'Win Probability (%)',
+        data: mcResult.sortedStats.slice(0, 12).map(s => (s.championCount / mcResult.summary!.simulationsRun) * 100),
+        backgroundColor: mcResult.sortedStats.slice(0, 12).map((_, idx) => {
+          if (idx === 0) return 'rgba(212, 175, 55, 0.85)'; // Champion Gold
+          if (idx === 1) return 'rgba(0, 242, 254, 0.75)'; // Cyan
+          return 'rgba(79, 172, 254, 0.55)'; // Soft blue
+        }),
+        borderColor: mcResult.sortedStats.slice(0, 12).map((_, idx) => {
+          if (idx === 0) return '#d4af37';
+          if (idx === 1) return '#00f2fe';
+          return '#4facfe';
+        }),
+        borderWidth: 1.5,
+        borderRadius: 6,
+        barThickness: 14
+      }
+    ]
+  };
+
+  const chartOptions = {
+    indexAxis: 'y' as const,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(18, 22, 44, 0.95)',
+        titleColor: '#fff',
+        bodyColor: '#ffe885',
+        borderColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        callbacks: {
+          label: (context: any) => ` Champion Probability: ${context.parsed.x.toFixed(1)}%`
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+        ticks: { color: '#a1a8c3', font: { family: 'Inter' } }
+      },
+      y: {
+        grid: { display: false },
+        ticks: { color: '#f3f4f6', font: { family: 'Outfit', weight: 600 } }
+      }
+    }
+  };
+
+  const locksCount = Object.keys(lockedMatches).length;
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -123,6 +249,23 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
             Monte Carlo Simulator
           </button>
         </div>
+
+        {/* Locked indicators */}
+        {locksCount > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--accent-cyan)', background: 'rgba(0, 242, 254, 0.05)', padding: '6px 12px', borderRadius: '15px', border: '1px solid rgba(0, 242, 254, 0.15)' }}>
+            <Lock style={{ width: '12px', height: '12px' }} />
+            <span>{locksCount} Scenario Results Locked</span>
+            {onClearLocks && (
+              <button 
+                onClick={onClearLocks} 
+                style={{ background: 'transparent', border: 'none', color: 'var(--accent-error)', cursor: 'pointer', fontWeight: 'bold', marginLeft: '6px' }}
+                disabled={isSimulating}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="sim-controls" style={{ margin: 0 }}>
           {simMode === 'SINGLE' ? (
@@ -248,54 +391,127 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
             </div>
           </div>
 
-          {/* Group Standings */}
+          {/* Group Standings & Scenario Locks */}
           <div className="card">
             <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', fontFamily: 'var(--font-heading)' }}>Group Stage Standings</h2>
             <div className="groups-container">
-              {Object.entries(singleResult.groupStandings).map(([letter, standings]) => (
-                <div key={letter} className="card" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.03)', padding: '12px' }}>
-                  <h3 style={{ fontSize: '1.1rem', marginBottom: '10px', color: 'var(--accent-cyan)', borderBottom: '1px solid var(--border-glass)', paddingBottom: '4px' }}>
-                    Group {letter}
-                  </h3>
-                  <table className="group-table">
-                    <thead>
-                      <tr>
-                        <th className="left">Team</th>
-                        <th>P</th>
-                        <th>Pts</th>
-                        <th>GD</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {standings.map((teamStanding, idx) => {
-                        const t = getTeam(teamStanding.teamId);
-                        // Row styling indicating advancement
-                        // Top 2: direct qualification. 3rd: qualified if in top 8 third-places
-                        const isTop2 = idx < 2;
-                        const isThirdQualify = idx === 2 && singleResult.qualifiedKnockoutTeams.includes(teamStanding.teamId);
-                        
-                        let trClass = '';
-                        if (isTop2) trClass = 'qualify-direct';
-                        else if (isThirdQualify) trClass = 'qualify-3rd';
-                        
-                        return (
-                          <tr key={t.id} className={trClass}>
-                            <td className="left" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: (isTop2 || isThirdQualify) ? '600' : 'normal' }}>
-                              <span>{t.flag}</span>
-                              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '80px' }}>{t.name}</span>
-                            </td>
-                            <td>{teamStanding.played}</td>
-                            <td style={{ color: (isTop2 || isThirdQualify) ? '#fff' : 'var(--text-secondary)', fontWeight: 'bold' }}>{teamStanding.points}</td>
-                            <td style={{ color: teamStanding.goalDifference > 0 ? 'var(--accent-success)' : teamStanding.goalDifference < 0 ? 'var(--accent-error)' : 'var(--text-muted)' }}>
-                              {teamStanding.goalDifference > 0 ? `+${teamStanding.goalDifference}` : teamStanding.goalDifference}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
+              {Object.entries(singleResult.groupStandings).map(([letter, standings]) => {
+                const groupTeams = teams.filter(t => t.group === letter);
+                
+                // Deterministic pairings
+                const matchPairings = [
+                  [0, 1], [2, 3],
+                  [0, 2], [1, 3],
+                  [0, 3], [1, 2]
+                ];
+
+                return (
+                  <div key={letter} className="card" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.03)', padding: '12px' }}>
+                    <h3 style={{ fontSize: '1.1rem', marginBottom: '10px', color: 'var(--accent-cyan)', borderBottom: '1px solid var(--border-glass)', paddingBottom: '4px' }}>
+                      Group {letter}
+                    </h3>
+                    
+                    <table className="group-table" style={{ marginBottom: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th className="left">Team</th>
+                          <th>P</th>
+                          <th>Pts</th>
+                          <th>GD</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {standings.map((teamStanding, idx) => {
+                          const t = getTeam(teamStanding.teamId);
+                          const isTop2 = idx < 2;
+                          const isThirdQualify = idx === 2 && singleResult.qualifiedKnockoutTeams.includes(teamStanding.teamId);
+                          
+                          let trClass = '';
+                          if (isTop2) trClass = 'qualify-direct';
+                          else if (isThirdQualify) trClass = 'qualify-3rd';
+                          
+                          return (
+                            <tr key={t.id} className={trClass}>
+                              <td className="left" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: (isTop2 || isThirdQualify) ? '600' : 'normal' }}>
+                                <span>{t.flag}</span>
+                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '80px' }}>{t.name}</span>
+                              </td>
+                              <td>{teamStanding.played}</td>
+                              <td style={{ color: (isTop2 || isThirdQualify) ? '#fff' : 'var(--text-secondary)', fontWeight: 'bold' }}>{teamStanding.points}</td>
+                              <td style={{ color: teamStanding.goalDifference > 0 ? 'var(--accent-success)' : teamStanding.goalDifference < 0 ? 'var(--accent-error)' : 'var(--text-muted)' }}>
+                                {teamStanding.goalDifference > 0 ? `+${teamStanding.goalDifference}` : teamStanding.goalDifference}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    {/* Group Fixtures (Scenario editor locks) */}
+                    <div style={{ borderTop: '1px dashed rgba(255,255,255,0.06)', paddingTop: '8px' }}>
+                      <h4 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Lock Fixtures</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {matchPairings.map(([idxHome, idxAway]) => {
+                          const home = groupTeams[idxHome];
+                          const away = groupTeams[idxAway];
+                          const matchId = `G_${letter}_${home.id}_${away.id}`;
+                          
+                          const isLocked = !!lockedMatches[matchId];
+                          const lockGoals = lockedMatches[matchId];
+                          const localState = lockScores[matchId] || { goalsHome: 0, goalsAway: 0 };
+                          
+                          return (
+                            <div key={matchId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '4px 6px', borderRadius: '6px', fontSize: '0.75rem' }}>
+                              <span style={{ width: '80px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={home.name}>
+                                {home.flag} {home.name}
+                              </span>
+                              
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <input 
+                                  type="number"
+                                  min="0"
+                                  max="9"
+                                  value={isLocked ? lockGoals.goalsHome! : localState.goalsHome}
+                                  onChange={(e) => handleInputChange(matchId, 'home', Math.max(0, parseInt(e.target.value) || 0))}
+                                  disabled={isLocked || isSimulating}
+                                  style={{ width: '28px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: '#fff', textAlign: 'center', fontSize: '0.75rem', padding: '2px' }}
+                                />
+                                <span style={{ color: 'var(--text-muted)' }}>-</span>
+                                <input 
+                                  type="number"
+                                  min="0"
+                                  max="9"
+                                  value={isLocked ? lockGoals.goalsAway! : localState.goalsAway}
+                                  onChange={(e) => handleInputChange(matchId, 'away', Math.max(0, parseInt(e.target.value) || 0))}
+                                  disabled={isLocked || isSimulating}
+                                  style={{ width: '28px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: '#fff', textAlign: 'center', fontSize: '0.75rem', padding: '2px' }}
+                                />
+                              </div>
+
+                              <span style={{ width: '80px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'right' }} title={away.name}>
+                                {away.name} {away.flag}
+                              </span>
+
+                              <button 
+                                onClick={() => onToggleLockMatch?.(matchId, home.id, away.id, isLocked ? 0 : localState.goalsHome, isLocked ? 0 : localState.goalsAway)}
+                                disabled={isSimulating}
+                                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                title={isLocked ? "Unlock Scoreline" : "Lock Scoreline"}
+                              >
+                                {isLocked ? (
+                                  <Lock style={{ width: '12px', height: '12px', color: 'var(--accent-cyan)' }} />
+                                ) : (
+                                  <Unlock style={{ width: '12px', height: '12px', color: 'var(--text-muted)' }} />
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -303,57 +519,85 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
 
       {/* MONTE CARLO RENDER */}
       {simMode === 'MONTE_CARLO' && mcResult.simulated && !isSimulating && mcResult.summary && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '2rem' }}>
           
-          <div className="card">
-            <h2 style={{ fontSize: '1.5rem', marginBottom: '8px', fontFamily: 'var(--font-heading)' }}>Monte Carlo Odds Summary</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-              Winning probabilities accumulated over <strong>{mcResult.summary.simulationsRun.toLocaleString()}</strong> full tournament runs:
+          {/* Left Column: Horizontal Bar Chart */}
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <h2 style={{ fontSize: '1.5rem', fontFamily: 'var(--font-heading)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <BarChart3 style={{ color: 'var(--accent-cyan)' }} />
+              Win Probabilities Distribution
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+              Calculated victory shares over <strong>{mcResult.summary.simulationsRun.toLocaleString()}</strong> full tournament runs:
             </p>
 
-            <div className="monte-carlo-chart">
-              {mcResult.sortedStats.slice(0, 15).map((stat, idx) => {
-                const team = getTeam(stat.teamId);
-                const winPct = (stat.championCount / mcResult.summary!.simulationsRun) * 100;
-                const finalPct = ((stat.championCount + stat.runnerUpCount) / mcResult.summary!.simulationsRun) * 100;
-                const semisPct = (stat.semiFinalCount / mcResult.summary!.simulationsRun) * 100;
-                
-                return (
-                  <div key={stat.teamId} className="chart-row">
-                    <div className="chart-team-label">
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', width: '18px' }}>#{idx + 1}</span>
-                      <span>{team.flag}</span>
-                      <strong style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100px' }}>{team.name}</strong>
-                    </div>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div className="chart-bar-bg" title={`Champion: ${winPct.toFixed(1)}% | Finalist: ${finalPct.toFixed(1)}% | Semis: ${semisPct.toFixed(1)}%`}>
-                        <div className="chart-bar-fill" style={{ width: `${Math.max(1, winPct * 5)}%` }}></div>
-                      </div>
-                      
-                      {/* Sub stats row */}
-                      <div style={{ display: 'flex', gap: '12px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        <span>Finals: {finalPct.toFixed(1)}%</span>
-                        <span>Semis: {semisPct.toFixed(1)}%</span>
-                        <span>Group Stage Exit: {((stat.groupStageExitCount / mcResult.summary!.simulationsRun) * 100).toFixed(1)}%</span>
-                      </div>
-                    </div>
-
-                    <div className="chart-value-label">
-                      {winPct.toFixed(1)}%
-                    </div>
-                  </div>
-                );
-              })}
+            {/* Horizontal Bar Chart Container */}
+            <div style={{ position: 'relative', height: '420px', width: '100%', marginTop: '1rem' }}>
+              <Bar data={chartData} options={chartOptions} />
             </div>
 
-            <div style={{ marginTop: '2rem', padding: '12px', borderTop: '1px solid var(--border-glass)', color: 'var(--text-muted)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <HelpCircle style={{ width: '16px', height: '16px', color: 'var(--accent-cyan)' }} />
+            <div style={{ marginTop: '1rem', padding: '12px', background: 'rgba(0, 242, 254, 0.02)', border: '1px solid rgba(0, 242, 254, 0.1)', borderRadius: '8px', color: 'var(--text-muted)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Zap style={{ width: '16px', height: '16px', color: 'var(--accent-cyan)', flexShrink: 0 }} />
               <span>
-                Want to change these odds? Go to the <strong>Squad Manager</strong>, reduce key players' ratings (e.g. simulate a French squad with Kylian Mbappé injured) and re-run the simulation. You will see their chances drop!
+                <strong>Bayesian Ratings & Rest:</strong> Winning chances decay dynamically if teams suffer injuries, pick up suspensions, or accumulate match fatigue!
               </span>
             </div>
           </div>
+
+          {/* Right Column: Golden Boot Leaderboard */}
+          <div className="card highlight" style={{ borderColor: 'var(--border-glass-active)', height: 'fit-content' }}>
+            <h2 style={{ fontSize: '1.3rem', marginBottom: '1rem', fontFamily: 'var(--font-heading)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Trophy style={{ color: 'var(--accent-gold)' }} />
+              Golden Boot Leaderboard
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '1rem', lineHeight: '1.4' }}>
+              Top scorers averaged across all simulated tournament runs:
+            </p>
+
+            <table className="group-table" style={{ fontSize: '0.80rem' }}>
+              <thead>
+                <tr>
+                  <th style={{ width: '30px' }}>Rank</th>
+                  <th className="left">Player</th>
+                  <th>Avg G</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topScorers.map((p, idx) => (
+                  <tr key={p.playerId} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                    <td>
+                      <strong style={{ color: idx === 0 ? 'var(--accent-gold)' : 'var(--text-primary)' }}>
+                        #{idx + 1}
+                      </strong>
+                    </td>
+                    <td className="left">
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <strong>{p.name}</strong>
+                        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                          {p.teamFlag} {p.teamName}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ fontWeight: '700', color: 'var(--accent-gold)' }}>
+                      {p.avgGoals.toFixed(2)}
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)' }}>
+                      {p.goals}
+                    </td>
+                  </tr>
+                ))}
+                {topScorers.length === 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>
+                      No goals simulated yet. Run a simulation to populate!
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
         </div>
       )}
 
@@ -396,7 +640,7 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({ teams,
 // Bracket Card Component Helper
 interface BracketMatchCardProps {
   match: Match;
-  getTeam: (id: string) => { name: string; flag: string; elo: number };
+  getTeam: (id: string) => Team;
 }
 
 const BracketMatchCard: React.FC<BracketMatchCardProps> = ({ match, getTeam }) => {

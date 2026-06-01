@@ -3,11 +3,13 @@ export interface Team {
   name: string;
   group: string; // 'A' through 'L'
   elo: number;
+  baselineElo: number; // backup baseline Elo for Bayesian resets
   fifaRank: number;
   sqi: number; // Squad Quality Index, calculated dynamically based on player ratings
   flag: string; // Flag emoji or URL
   recentForm: string[]; // e.g. ['W', 'D', 'W', 'W', 'L']
   stars: number; // visual rating 1-5
+  matchesPlayed?: number; // to track tournament progression for fatigue
 }
 
 export type PlayerPosition = 'GK' | 'DEF' | 'MID' | 'FWD';
@@ -21,6 +23,7 @@ export interface Player {
   form: number; // form multiplier, e.g. 0.8 to 1.2
   injured: boolean;
   suspended: boolean;
+  suspensionRoundsRemaining?: number; // matches remaining for suspension
   club: string;
   goalsScored?: number; // for tracking tournament stats
   assists?: number;
@@ -41,6 +44,7 @@ export interface Match {
   isSimulated: boolean;
   groupLetter: string | null; // e.g. 'A' for group matches, null for knockouts
   matchNumber?: number; // ordering index
+  locked?: boolean; // scenario lock
 }
 
 export interface GroupStanding {
@@ -78,4 +82,14 @@ export interface TeamSimStats {
 export interface SimulationSummary {
   simulationsRun: number;
   stats: Record<string, TeamSimStats>; // teamId to stats
+}
+
+export interface GoldenBootPlayer {
+  playerId: string;
+  name: string;
+  teamId: string;
+  teamName: string;
+  teamFlag: string;
+  goals: number; // accumulated total goals across all simulations
+  avgGoals: number; // average goals per simulation
 }

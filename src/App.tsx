@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { Team, Player } from './types';
+import type { Team, Player, Match } from './types';
 import { teamsData } from './data/teamsData';
 import { initializeAllPlayers } from './data/playersData';
 
@@ -17,11 +17,40 @@ function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [teams, setTeams] = useState<Team[]>([]);
   const [playersDb, setPlayersDb] = useState<Record<string, Player[]>>({});
+  const [lockedMatches, setLockedMatches] = useState<Record<string, Match>>({});
+
+  const handleToggleLockMatch = (matchId: string, homeTeamId: string, awayTeamId: string, goalsHome: number, goalsAway: number) => {
+    setLockedMatches(prev => {
+      const next = { ...prev };
+      if (next[matchId]) {
+        delete next[matchId];
+      } else {
+        next[matchId] = {
+          id: matchId,
+          homeTeamId,
+          awayTeamId,
+          stage: 'GROUP',
+          goalsHome,
+          goalsAway,
+          shootoutGoalsHome: null,
+          shootoutGoalsAway: null,
+          winnerId: goalsHome > goalsAway ? homeTeamId : goalsAway > goalsHome ? awayTeamId : null,
+          isSimulated: true,
+          groupLetter: null,
+          locked: true
+        };
+      }
+      return next;
+    });
+  };
 
   // Initialize data on mount
   useEffect(() => {
     // 1. Initialize teams
-    const initialTeams = [...teamsData];
+    const initialTeams: Team[] = teamsData.map(team => ({
+      ...team,
+      baselineElo: team.elo
+    }));
     
     // 2. Initialize players database (procedural + preloaded)
     const initialPlayersDb = initializeAllPlayers(initialTeams);
@@ -103,7 +132,15 @@ function App() {
       case 'dashboard':
         return <Dashboard teams={teams} onSelectTab={setActiveTab} />;
       case 'simulator':
-        return <TournamentSimulator teams={teams} playersDb={playersDb} />;
+        return (
+          <TournamentSimulator 
+            teams={teams} 
+            playersDb={playersDb} 
+            lockedMatches={lockedMatches} 
+            onToggleLockMatch={handleToggleLockMatch}
+            onClearLocks={() => setLockedMatches({})}
+          />
+        );
       case 'squad':
         return <SquadManager teams={teams} playersDb={playersDb} onUpdatePlayer={handleUpdatePlayer} />;
       case 'predictor':

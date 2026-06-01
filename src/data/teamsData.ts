@@ -1,6 +1,6 @@
 import type { Team } from '../types';
 
-export const teamsData: Team[] = [
+export const teamsData: Omit<Team, 'baselineElo'>[] = [
   // Group A
   { id: "MEX", name: "Mexico", group: "A", elo: 1820, fifaRank: 15, sqi: 0, flag: "🇲🇽", recentForm: ["W", "L", "D", "W", "W"], stars: 4 },
   { id: "KOR", name: "South Korea", group: "A", elo: 1790, fifaRank: 22, sqi: 0, flag: "🇰🇷", recentForm: ["W", "W", "D", "L", "W"], stars: 3 },

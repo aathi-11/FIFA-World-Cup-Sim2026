@@ -43,7 +43,7 @@ export const SquadManager: React.FC<SquadManagerProps> = ({ teams, playersDb, on
   });
 
   return (
-    <div className="animate-fade-in grid-main">
+    <div className="animate-fade-in grid-squad">
       
       {/* Left Column: Team Browser */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', height: 'fit-content' }}>
@@ -104,6 +104,9 @@ export const SquadManager: React.FC<SquadManagerProps> = ({ teams, playersDb, on
               <h2 className="squad-header-name">{selectedTeam.name}</h2>
               <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                 Group {selectedTeam.group} • Baseline Elo: {selectedTeam.elo} • FIFA Rank: #{selectedTeam.fifaRank}
+              </div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '4px' }}>
+                Manager: <span style={{ color: 'var(--accent-gold)', fontWeight: 600 }}>{selectedTeam.manager || 'Unknown'}</span>
               </div>
             </div>
           </div>

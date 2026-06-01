@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react';
 import type { Team, Player, Match } from './types';
 import { teamsData } from './data/teamsData';
 import { initializeAllPlayers } from './data/playersData';
+import type { LiveSyncType } from './components/LiveSync';
+import LiveSync from './components/LiveSync';
+import { applyLiveResultsToLocks } from './data/liveUpdates';
+import type { PlayerPerformance, EloUpdate, LiveInjuries } from './data/liveUpdates';
 
 // Components
 import { Dashboard } from './components/Dashboard';
@@ -19,25 +23,82 @@ function App() {
   const [playersDb, setPlayersDb] = useState<Record<string, Player[]>>({});
   const [lockedMatches, setLockedMatches] = useState<Record<string, Match>>({});
 
-  const handleToggleLockMatch = (matchId: string, homeTeamId: string, awayTeamId: string, goalsHome: number, goalsAway: number) => {
+  // ── Live Data State (populated by LiveSync via Groq) ──────────────────
+  const [liveMatchResults, setLiveMatchResults] = useState<unknown[]>([]);
+  const [livePerformances, setLivePerformances] = useState<PlayerPerformance[]>([]);
+  const [liveElo, setLiveElo] = useState<EloUpdate>({});
+  const [liveInjuries, setLiveInjuries] = useState<LiveInjuries>({ injuries: [], suspensions: [] });
+
+  const hasLiveData =
+    liveMatchResults.length > 0 ||
+    livePerformances.length > 0 ||
+    Object.keys(liveElo).length > 0 ||
+    liveInjuries.injuries.length > 0 ||
+    liveInjuries.suspensions.length > 0;
+
+  // ── Live Update Handler ────────────────────────────────────────────────
+  const handleLiveUpdate = (type: LiveSyncType, data: unknown) => {
+    if (type === 'results') {
+      const d = data as { matches?: unknown[] };
+      const results = (d.matches ?? (Array.isArray(data) ? data : [])) as Parameters<typeof applyLiveResultsToLocks>[1];
+      setLiveMatchResults(results);
+      // Merge real results into lockedMatches so simulation never re-plays them
+      setLockedMatches(prev => applyLiveResultsToLocks(prev, results));
+    }
+    if (type === 'performances') {
+      const d = data as { performances?: PlayerPerformance[] };
+      setLivePerformances(d.performances ?? (Array.isArray(data) ? data as PlayerPerformance[] : []));
+    }
+    if (type === 'elo') {
+      const d = data as { updatedElo?: EloUpdate };
+      setLiveElo(d.updatedElo ?? (typeof data === 'object' && data !== null ? data as EloUpdate : {}));
+    }
+    if (type === 'injuries') {
+      const d = data as Partial<LiveInjuries>;
+      setLiveInjuries({
+        injuries: d.injuries ?? [],
+        suspensions: d.suspensions ?? [],
+      });
+    }
+  };
+
+  const handleToggleLockMatch = (
+    matchId: string, 
+    homeTeamId: string, 
+    awayTeamId: string, 
+    goalsHome: number, 
+    goalsAway: number, 
+    stage: Match['stage'] = 'GROUP', 
+    realPlayed: boolean = false,
+    shootoutGoalsHome: number | null = null,
+    shootoutGoalsAway: number | null = null
+  ) => {
     setLockedMatches(prev => {
       const next = { ...prev };
-      if (next[matchId]) {
+      if (next[matchId] && next[matchId].realPlayed === realPlayed) {
         delete next[matchId];
       } else {
+        let winnerId: string | null = null;
+        if (goalsHome > goalsAway) winnerId = homeTeamId;
+        else if (goalsAway > goalsHome) winnerId = awayTeamId;
+        else if (shootoutGoalsHome !== null && shootoutGoalsAway !== null) {
+          winnerId = shootoutGoalsHome > shootoutGoalsAway ? homeTeamId : awayTeamId;
+        }
+
         next[matchId] = {
           id: matchId,
           homeTeamId,
           awayTeamId,
-          stage: 'GROUP',
+          stage,
           goalsHome,
           goalsAway,
-          shootoutGoalsHome: null,
-          shootoutGoalsAway: null,
-          winnerId: goalsHome > goalsAway ? homeTeamId : goalsAway > goalsHome ? awayTeamId : null,
+          shootoutGoalsHome,
+          shootoutGoalsAway,
+          winnerId,
           isSimulated: true,
-          groupLetter: null,
-          locked: true
+          groupLetter: matchId.startsWith('G_') ? matchId.split('_')[1] : null,
+          locked: !realPlayed,
+          realPlayed: realPlayed
         };
       }
       return next;
@@ -139,6 +200,8 @@ function App() {
             lockedMatches={lockedMatches} 
             onToggleLockMatch={handleToggleLockMatch}
             onClearLocks={() => setLockedMatches({})}
+            liveElo={liveElo}
+            livePerformances={livePerformances}
           />
         );
       case 'squad':
@@ -202,6 +265,9 @@ function App() {
             Model Math
           </button>
         </nav>
+
+        {/* Live Sync Panel */}
+        <LiveSync onUpdate={handleLiveUpdate} hasLiveData={hasLiveData} />
       </header>
 
       {/* Main Content Area */}

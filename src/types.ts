@@ -10,6 +10,7 @@ export interface Team {
   recentForm: string[]; // e.g. ['W', 'D', 'W', 'W', 'L']
   stars: number; // visual rating 1-5
   matchesPlayed?: number; // to track tournament progression for fatigue
+  manager?: string; // Team manager name
 }
 
 export type PlayerPosition = 'GK' | 'DEF' | 'MID' | 'FWD';
@@ -43,8 +44,12 @@ export interface Match {
   winnerId: string | null;
   isSimulated: boolean;
   groupLetter: string | null; // e.g. 'A' for group matches, null for knockouts
-  matchNumber?: number; // ordering index
   locked?: boolean; // scenario lock
+  realPlayed?: boolean; // real-world match completed
+  matchNumber?: number; // ordering index
+  date?: string; // Date of the match (e.g. "June 11, 2026")
+  stadium?: string; // Venue of the match
+  kickoffTime?: string; // Kickoff time of the match
 }
 
 export interface GroupStanding {

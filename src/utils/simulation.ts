@@ -1,4 +1,6 @@
 import type { Team, Player, Match, GroupStanding, TeamSimStats, SimulationSummary } from '../types';
+import type { PlayerPerformance, EloUpdate } from '../data/liveUpdates';
+import { getLatestPerformance } from '../data/liveUpdates';
 
 // Baseline goals expected in a football match (avg 1.35 goals per team = 2.7 total)
 const BASELINE_GOAL_EXP = 1.35;
@@ -6,8 +8,10 @@ const BASELINE_GOAL_EXP = 1.35;
 const SENSITIVITY = 1.15;
 // Host countries
 const HOSTS = ["USA", "CAN", "MEX"];
-// Dixon-Coles low-score correction parameter
-const RHO = -0.06;
+// Dixon-Coles low-score correction parameter (empirical value from the original 1997 paper)
+const RHO = -0.13;
+// Bivariate Poisson covariance term: captures open-play correlation between both teams' goals
+const BP_LAMBDA3 = 0.1;
 
 // Historical head-to-head records database (bias adjustments)
 const H2H_BIASES: Record<string, number> = {
@@ -32,14 +36,23 @@ export const calculateTeamStrength = (
   team: Team, 
   squad: Player[], 
   isKnockout: boolean = false,
-  matchNumber: number = 0
+  matchNumber: number = 0,
+  livePerformances: PlayerPerformance[] = []
 ): number => {
   const activePlayers = squad.filter(p => !p.injured && !p.suspended);
   
   // 1. Calculate Squad Quality Index (SQI)
+  // If live performance data is available, apply per-player form multipliers from Groq
   let sqi = 50;
   if (activePlayers.length > 0) {
-    const totalRating = activePlayers.reduce((sum, p) => sum + p.rating * p.form, 0);
+    const totalRating = activePlayers.reduce((sum, p) => {
+      const livePerf = getLatestPerformance(p.name, livePerformances);
+      // Live form multiplier overrides static player.form when available
+      const formMult = livePerf ? livePerf.formMultiplier : p.form;
+      // If the live data says player is injured, exclude them from SQI
+      if (livePerf?.injured) return sum;
+      return sum + p.rating * formMult;
+    }, 0);
     sqi = totalRating / activePlayers.length;
   }
   
@@ -49,7 +62,7 @@ export const calculateTeamStrength = (
     elo += isKnockout ? 40 : 80;
   }
   
-  // 3. Form Multiplier
+  // 3. Form Multiplier (from recent match results W/D/L)
   let formMultiplier = 1.0;
   if (team.recentForm && team.recentForm.length > 0) {
     const points = team.recentForm.reduce((sum, res) => {
@@ -142,6 +155,41 @@ export const getDixonColesTau = (x: number, y: number, l1: number, l2: number, r
   return 1;
 };
 
+// ── Model 2: Bradley-Terry ────────────────────────────────────────────────
+
+/**
+ * Bradley-Terry win probability: P(A beats B) = exp(eloA/400) / (exp(eloA/400) + exp(eloB/400))
+ * Handles transitivity better than Elo difference in short tournaments.
+ */
+export const bradleyTerryWinProb = (eloA: number, eloB: number): number => {
+  const btA = Math.exp(eloA / 400);
+  const btB = Math.exp(eloB / 400);
+  return btA / (btA + btB);
+};
+
+/**
+ * Converts a Bradley-Terry win probability into win/draw/loss probabilities
+ * by distributing a draw probability proportional to closeness.
+ */
+export const bradleyTerryFullProbs = (
+  eloA: number,
+  eloB: number
+): { homeWin: number; draw: number; awayWin: number } => {
+  const pWin = bradleyTerryWinProb(eloA, eloB);
+  const pLoss = 1 - pWin;
+  // Draw mass: peaks at 0.28 when evenly matched, shrinks as gap grows
+  const drawMass = 0.28 * (1 - Math.abs(pWin - pLoss));
+  const homeWin = pWin - drawMass / 2;
+  const awayWin = pLoss - drawMass / 2;
+  return {
+    homeWin: Math.max(0.01, homeWin),
+    draw: Math.max(0.01, drawMass),
+    awayWin: Math.max(0.01, awayWin)
+  };
+};
+
+// ── Model 3: Bivariate Poisson ────────────────────────────────────────────
+
 /**
  * Calculates Poisson probability for a specific number of goals.
  */
@@ -149,6 +197,62 @@ const poissonProbability = (k: number, lambda: number): number => {
   let factorial = 1;
   for (let i = 1; i <= k; i++) factorial *= i;
   return (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial;
+};
+
+/**
+ * Bivariate Poisson joint PMF: P(X=x, Y=y) with covariance λ3.
+ * λ3 > 0 captures the positive correlation (e.g. open play after a goal).
+ * λ3 = BP_LAMBDA3 = 0.1 is a calibrated starting value.
+ */
+const bivariatePoissonPMF = (
+  x: number,
+  y: number,
+  lambda1: number,
+  lambda2: number,
+  lambda3: number = BP_LAMBDA3
+): number => {
+  const kMax = Math.min(x, y);
+  let sum = 0;
+  let factorial = (n: number) => { let f = 1; for (let i = 2; i <= n; i++) f *= i; return f; };
+  for (let k = 0; k <= kMax; k++) {
+    sum +=
+      poissonProbability(k, lambda3) *
+      poissonProbability(x - k, lambda1) *
+      poissonProbability(y - k, lambda2) *
+      (factorial(x) * factorial(y)) /
+      (factorial(x - k) * factorial(y - k) * factorial(k) * factorial(k));
+  }
+  return sum;
+};
+
+/**
+ * Generates win/draw/loss probabilities using the Bivariate Poisson model.
+ * Uses a 7x7 score grid (capped at 6 goals per team).
+ */
+export const getBivariatePoissonProbabilities = (
+  lambdaHome: number,
+  lambdaAway: number
+): { homeWin: number; draw: number; awayWin: number } => {
+  let homeWin = 0, draw = 0, awayWin = 0, total = 0;
+  const grid: number[][] = [];
+  for (let x = 0; x < 7; x++) {
+    grid[x] = [];
+    for (let y = 0; y < 7; y++) {
+      const p = bivariatePoissonPMF(x, y, lambdaHome, lambdaAway);
+      grid[x][y] = Math.max(0, p);
+      total += grid[x][y];
+    }
+  }
+  // Normalize and classify
+  for (let x = 0; x < 7; x++) {
+    for (let y = 0; y < 7; y++) {
+      const p = grid[x][y] / (total || 1);
+      if (x > y) homeWin += p;
+      else if (x === y) draw += p;
+      else awayWin += p;
+    }
+  }
+  return { homeWin, draw, awayWin };
 };
 
 /**
@@ -253,21 +357,31 @@ export const getEnsembleProbabilities = (
   const lambdaHome = lambdaHomeBase * homeOffFactor * awayDefFactor * homeBias;
   const lambdaAway = lambdaAwayBase * awayOffFactor * homeDefFactor * (1.0 / homeBias);
   
-  // 2. Solve Poisson Win/Draw/Loss exact rates
+  // 2. Solve Dixon-Coles Poisson (Model 1 — backbone)
   const pPoisson = getPoissonGridProbabilities(lambdaHome, lambdaAway);
   
-  // 3. Solve Logistic rates
+  // 3. Solve Logistic/Elo rates (used in ensemble as Elo component)
   const pLogistic = getLogisticProbabilities(homeStrength, awayStrength, homeBias);
   
-  // 4. Ensemble
-  const homeWin = 0.6 * pPoisson.homeWin + 0.4 * pLogistic.homeWin;
-  const draw = 0.6 * pPoisson.draw + 0.4 * pLogistic.draw;
-  const awayWin = 0.6 * pPoisson.awayWin + 0.4 * pLogistic.awayWin;
+  // 4. Bradley-Terry (Model 2 — transitivity correction)
+  const pBT = bradleyTerryFullProbs(homeTeam.elo, awayTeam.elo);
   
+  // 5. Bivariate Poisson (Model 3 — open-play goal correlation)
+  const pBP = getBivariatePoissonProbabilities(lambdaHome, lambdaAway);
+  
+  // 6. 4-Model Weighted Ensemble
+  // Weights: Elo/Logistic=35%, DixonColes=30%, BradleyTerry=20%, BivariatePoisson=15%
+  const W_ELO = 0.35, W_DC = 0.30, W_BT = 0.20, W_BP = 0.15;
+  const homeWin = W_ELO * pLogistic.homeWin + W_DC * pPoisson.homeWin + W_BT * pBT.homeWin + W_BP * pBP.homeWin;
+  const draw    = W_ELO * pLogistic.draw    + W_DC * pPoisson.draw    + W_BT * pBT.draw    + W_BP * pBP.draw;
+  const awayWin = W_ELO * pLogistic.awayWin + W_DC * pPoisson.awayWin + W_BT * pBT.awayWin + W_BP * pBP.awayWin;
+  
+  // Normalize to ensure sum = 1.0
+  const total = homeWin + draw + awayWin;
   return {
-    homeWin,
-    draw,
-    awayWin,
+    homeWin: homeWin / total,
+    draw: draw / total,
+    awayWin: awayWin / total,
     poisson: { homeWin: pPoisson.homeWin, draw: pPoisson.draw, awayWin: pPoisson.awayWin },
     logistic: pLogistic
   };
@@ -509,8 +623,11 @@ export const updateBayesianElo = (teamA: Team, teamB: Team, match: Match) => {
     outB = 1.0;
   }
   
-  // K-factor: 20 for group stages, 30 for knockout rounds
-  const k = match.stage === 'GROUP' ? 20 : 30;
+  // K-factor scales by stakes: 20 group → 30 R32/R16 → 40 QF/SF → 50 Final
+  let k = 20;
+  if (match.stage === 'R32' || match.stage === 'R16') k = 30;
+  else if (match.stage === 'QF' || match.stage === 'SF') k = 40;
+  else if (match.stage === 'FINAL' || match.stage === 'THIRD_PLACE') k = 50;
   
   teamA.elo = Math.round(teamA.elo + k * (outA - expA));
   teamB.elo = Math.round(teamB.elo + k * (outB - expB));
@@ -532,33 +649,151 @@ const tickSuspensions = (squads: Record<string, Player[]>) => {
   });
 };
 
+const STADIUMS = [
+  "Estadio Azteca, Mexico City",
+  "BMO Field, Toronto",
+  "SoFi Stadium, Los Angeles",
+  "Estadio Akron, Guadalajara",
+  "MetLife Stadium, New York/New Jersey",
+  "AT&T Stadium, Dallas",
+  "Mercedes-Benz Stadium, Atlanta",
+  "Hard Rock Stadium, Miami",
+  "Gillette Stadium, Boston",
+  "NRG Stadium, Houston",
+  "Arrowhead Stadium, Kansas City",
+  "Lincoln Financial Field, Philadelphia",
+  "Levi's Stadium, San Francisco Bay Area",
+  "Lumen Field, Seattle",
+  "BC Place, Vancouver",
+  "Estadio BBVA, Monterrey"
+];
+
+export const getMatchScheduleInfo = (
+  matchNumber: number,
+  stage: Match['stage'],
+  _groupLetter: string | null
+): { date: string; stadium: string; kickoffTime: string } => {
+  let dateStr = "";
+  let venueStr = "";
+  let timeStr = "";
+
+  const formatDay = (dayOfJune: number) => {
+    if (dayOfJune <= 30) return `June ${dayOfJune}, 2026`;
+    return `July ${dayOfJune - 30}, 2026`;
+  };
+
+  if (stage === 'FINAL') {
+    venueStr = "MetLife Stadium, New York/New Jersey";
+    dateStr = "July 19, 2026";
+    timeStr = "15:00 Local";
+  } else if (stage === 'THIRD_PLACE') {
+    venueStr = "Hard Rock Stadium, Miami";
+    dateStr = "July 18, 2026";
+    timeStr = "16:00 Local";
+  } else if (stage === 'SF') {
+    if (matchNumber === 101) {
+      venueStr = "Mercedes-Benz Stadium, Atlanta";
+      dateStr = "July 14, 2026";
+    } else {
+      venueStr = "AT&T Stadium, Dallas";
+      dateStr = "July 15, 2026";
+    }
+    timeStr = "19:00 Local";
+  } else if (stage === 'QF') {
+    const qfVenues = [
+      "Gillette Stadium, Boston",
+      "SoFi Stadium, Los Angeles",
+      "Arrowhead Stadium, Kansas City",
+      "Hard Rock Stadium, Miami"
+    ];
+    venueStr = qfVenues[(matchNumber - 97) % 4] || "AT&T Stadium, Dallas";
+    const day = 39 + Math.floor((matchNumber - 97) / 2);
+    dateStr = formatDay(day);
+    timeStr = (matchNumber % 2 === 0) ? "17:00 Local" : "20:00 Local";
+  } else if (stage === 'R16') {
+    venueStr = STADIUMS[(matchNumber - 1) % STADIUMS.length];
+    const day = 34 + Math.floor((matchNumber - 89) / 2);
+    dateStr = formatDay(day);
+    timeStr = (matchNumber % 2 === 0) ? "16:00 Local" : "19:30 Local";
+  } else if (stage === 'R32') {
+    venueStr = STADIUMS[(matchNumber - 1) % STADIUMS.length];
+    const day = 28 + Math.floor((matchNumber - 73) / 3);
+    dateStr = formatDay(day);
+    timeStr = ["13:00 Local", "17:00 Local", "21:00 Local"][(matchNumber - 73) % 3];
+  } else {
+    if (matchNumber === 1) {
+      venueStr = "Estadio Azteca, Mexico City";
+      dateStr = "June 11, 2026";
+      timeStr = "17:00 Local";
+    } else if (matchNumber === 2) {
+      venueStr = "BMO Field, Toronto";
+      dateStr = "June 11, 2026";
+      timeStr = "20:00 Local";
+    } else if (matchNumber === 3) {
+      venueStr = "SoFi Stadium, Los Angeles";
+      dateStr = "June 12, 2026";
+      timeStr = "18:00 Local";
+    } else if (matchNumber === 4) {
+      venueStr = "Estadio Akron, Guadalajara";
+      dateStr = "June 12, 2026";
+      timeStr = "21:00 Local";
+    } else {
+      venueStr = STADIUMS[(matchNumber - 1) % STADIUMS.length];
+      const day = 11 + Math.min(16, Math.floor((matchNumber - 1) / 4.25));
+      dateStr = formatDay(day);
+      timeStr = ["13:00 Local", "16:00 Local", "18:00 Local", "21:00 Local"][(matchNumber - 1) % 4];
+    }
+  }
+
+  return { date: dateStr, stadium: venueStr, kickoffTime: timeStr };
+};
+
 /**
  * Runs a single full tournament simulation.
  */
 export const runFullTournamentSimulation = (
   teams: Team[],
   playersDb: Record<string, Player[]>,
-  lockedMatches: Record<string, Match> = {}
+  lockedMatches: Record<string, Match> = {},
+  startFromCurrentState: boolean = false,
+  startingStates?: {
+    elos: Record<string, number>;
+    matchesPlayed: Record<string, number>;
+    injuries: Record<string, boolean>;
+    suspensions: Record<string, boolean>;
+    suspensionRounds: Record<string, number>;
+  }
 ): {
   matches: Match[];
   groupStandings: Record<string, GroupStanding[]>;
   thirdPlaceStandings: GroupStanding[];
   qualifiedKnockoutTeams: string[];
 } => {
-  // Clear player goals and clear injury states before simulation for fresh run
+  // Clear player goals and restore injury states
   Object.values(playersDb).forEach(squad => {
     squad.forEach(p => {
       p.goalsScored = 0;
-      p.injured = false; // Reset injuries per run!
-      p.suspended = false; // Reset suspensions per run!
-      p.suspensionRoundsRemaining = 0;
+      if (startFromCurrentState && startingStates) {
+        p.injured = startingStates.injuries[p.id] || false;
+        p.suspended = startingStates.suspensions[p.id] || false;
+        p.suspensionRoundsRemaining = startingStates.suspensionRounds[p.id] || 0;
+      } else if (!startFromCurrentState) {
+        p.injured = false; // Reset injuries per run!
+        p.suspended = false; // Reset suspensions per run!
+        p.suspensionRoundsRemaining = 0;
+      }
     });
   });
 
-  // Reset Elos to baseline and clear matchesPlayed for fatigue
+  // Reset Elos and clear matchesPlayed for fatigue
   teams.forEach(t => {
-    t.elo = t.baselineElo;
-    t.matchesPlayed = 0;
+    if (startFromCurrentState) {
+      t.elo = startingStates ? startingStates.elos[t.id] : t.elo;
+      t.matchesPlayed = startingStates ? startingStates.matchesPlayed[t.id] : (t.matchesPlayed || 0);
+    } else {
+      t.elo = t.baselineElo;
+      t.matchesPlayed = 0;
+    }
   });
 
   const matches: Match[] = [];
@@ -577,7 +812,7 @@ export const runFullTournamentSimulation = (
     groupLetter: string | null = null
   ): Match => {
     let m: Match;
-    // Check if match is locked in the scenario editor
+    // Check if match is locked in the scenario editor (or has already been simulated as a real match)
     if (lockedMatches[matchId] && lockedMatches[matchId].goalsHome !== null && lockedMatches[matchId].goalsAway !== null) {
       const lock = lockedMatches[matchId];
       m = {
@@ -587,9 +822,9 @@ export const runFullTournamentSimulation = (
         stage,
         goalsHome: lock.goalsHome,
         goalsAway: lock.goalsAway,
-        shootoutGoalsHome: null,
-        shootoutGoalsAway: null,
-        winnerId: lock.goalsHome! > lock.goalsAway! ? home.id : lock.goalsAway! > lock.goalsHome! ? away.id : null,
+        shootoutGoalsHome: lock.shootoutGoalsHome || null,
+        shootoutGoalsAway: lock.shootoutGoalsAway || null,
+        winnerId: lock.winnerId || (lock.goalsHome! > lock.goalsAway! ? home.id : lock.goalsAway! > lock.goalsHome! ? away.id : null),
         isSimulated: true,
         groupLetter,
         matchNumber: matchCounter++,
@@ -610,10 +845,16 @@ export const runFullTournamentSimulation = (
         groupLetter,
         matchCounter++
       );
+      
+      // Update Bayesian Elo ratings based on newly simulated match result
+      updateBayesianElo(home, away, m);
     }
     
-    // Update Bayesian Elo ratings based on match result
-    updateBayesianElo(home, away, m);
+    const schedule = getMatchScheduleInfo(m.matchNumber || 0, stage, groupLetter);
+    m.date = schedule.date;
+    m.stadium = schedule.stadium;
+    m.kickoffTime = schedule.kickoffTime;
+    
     return m;
   };
   
@@ -782,12 +1023,27 @@ export const runFullTournamentSimulation = (
  * Runs a Monte Carlo simulation of the tournament N times.
  * This runs fully in-memory and compiles probabilities.
  */
+/**
+ * Applies live Elo ratings from Groq to the teams array (non-mutating).
+ * Teams not present in liveElo keep their current Elo.
+ */
+export const applyLiveElo = (teams: Team[], liveElo: EloUpdate): Team[] => {
+  if (Object.keys(liveElo).length === 0) return teams;
+  return teams.map(t => ({
+    ...t,
+    elo: liveElo[t.id] ?? t.elo
+  }));
+};
+
 export const runMonteCarloSimulation = (
   teams: Team[],
   playersDb: Record<string, Player[]>,
   runs: number = 1000,
   lockedMatches: Record<string, Match> = {},
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  startFromCurrentState: boolean = false,
+  liveElo: EloUpdate = {},
+  _livePerformances: PlayerPerformance[] = []
 ): SimulationSummary => {
   const stats: Record<string, TeamSimStats> = {};
   
@@ -803,10 +1059,27 @@ export const runMonteCarloSimulation = (
       groupStageExitCount: 0
     };
   });
-  
-  // Reset Elos of original array too, so they reflect correctly
+
+  // Capture the current starting states (Elos, fatigue, injuries, suspensions)
+  const startingStates = {
+    elos: {} as Record<string, number>,
+    matchesPlayed: {} as Record<string, number>,
+    injuries: {} as Record<string, boolean>,
+    suspensions: {} as Record<string, boolean>,
+    suspensionRounds: {} as Record<string, number>
+  };
+
   teams.forEach(t => {
-    t.elo = t.baselineElo;
+    startingStates.elos[t.id] = t.elo;
+    startingStates.matchesPlayed[t.id] = t.matchesPlayed || 0;
+  });
+
+  Object.keys(playersDb).forEach(teamId => {
+    playersDb[teamId].forEach(p => {
+      startingStates.injuries[p.id] = p.injured;
+      startingStates.suspensions[p.id] = p.suspended;
+      startingStates.suspensionRounds[p.id] = p.suspensionRoundsRemaining || 0;
+    });
   });
 
   const playersDbClone: Record<string, Player[]> = {};
@@ -814,10 +1087,21 @@ export const runMonteCarloSimulation = (
     playersDbClone[k] = playersDb[k].map(p => ({ ...p, goalsScored: 0 }));
   });
   
+  // Apply live Elo overrides before starting MC (non-mutating, only affects MC runs)
+  const teamsForMC = applyLiveElo(teams, liveElo);
+  // Sync starting Elo state with live-adjusted values so resets are correct
+  teamsForMC.forEach(t => { startingStates.elos[t.id] = t.elo; });
+
   const chunk = Math.max(1, Math.round(runs / 10));
   for (let run = 0; run < runs; run++) {
-    // Run simulation passing scenario locks
-    const result = runFullTournamentSimulation(teams, playersDbClone, lockedMatches);
+    // Run simulation passing scenario locks and starting states
+    const result = runFullTournamentSimulation(
+      teamsForMC, 
+      playersDbClone, 
+      lockedMatches, 
+      startFromCurrentState, 
+      startingStates
+    );
     
     const final = result.matches.find(m => m.stage === 'FINAL')!;
     const sfMatches = result.matches.filter(m => m.stage === 'SF');
@@ -880,6 +1164,20 @@ export const runMonteCarloSimulation = (
       if (p.goalsScored) {
         p.goalsScored = p.goalsScored / runs;
       }
+    });
+  });
+
+  // Restore original arrays back to starting state so UI reflects current state (not simulated results)
+  teams.forEach(t => {
+    t.elo = startingStates.elos[t.id];
+    t.matchesPlayed = startingStates.matchesPlayed[t.id];
+  });
+  
+  Object.keys(playersDb).forEach(teamId => {
+    playersDb[teamId].forEach(p => {
+      p.injured = startingStates.injuries[p.id];
+      p.suspended = startingStates.suspensions[p.id];
+      p.suspensionRoundsRemaining = startingStates.suspensionRounds[p.id];
     });
   });
 

@@ -20,6 +20,9 @@ import { FixturesAndStandings } from './components/FixturesAndStandings';
 // Icons
 import { Trophy, Users, Sparkles, HelpCircle, Activity, LayoutDashboard, Calendar } from 'lucide-react';
 
+// Analytics
+import { Analytics } from '@vercel/analytics/react';
+
 function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [teams, setTeams] = useState<Team[]>([]);
@@ -890,6 +893,9 @@ function App() {
           Simulation Engine calibrated at &ge;20% match classification error rate to respect football entropy (upset factor).
         </p>
       </footer>
+      
+      {/* Vercel Web Analytics */}
+      <Analytics />
     </div>
   );
 }

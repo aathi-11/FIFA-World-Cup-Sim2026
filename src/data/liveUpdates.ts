@@ -44,7 +44,11 @@ export interface PlayerPerformance {
   injured: boolean;
   /** Multiplier applied to player.form: 0.7 = poor, 1.0 = normal, 1.3 = outstanding */
   formMultiplier: number;
+  /** For GK tracking */
+  cleanSheet?: boolean;
+  saves?: number;
 }
+
 
 export interface InjuryUpdate {
   playerName: string;

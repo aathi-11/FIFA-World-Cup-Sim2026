@@ -28,7 +28,10 @@ export interface Player {
   club: string;
   goalsScored?: number; // for tracking tournament stats
   assists?: number;
+  cleanSheets?: number; // for GK tracking
+  saves?: number;       // for GK tracking
 }
+
 
 export type MatchStage = 'GROUP' | 'R32' | 'R16' | 'QF' | 'SF' | 'FINAL' | 'THIRD_PLACE';
 
@@ -50,6 +53,10 @@ export interface Match {
   date?: string; // Date of the match (e.g. "June 11, 2026")
   stadium?: string; // Venue of the match
   kickoffTime?: string; // Kickoff time of the match
+  preMatchProbHome?: number;
+  preMatchProbAway?: number;
+  preMatchProbDraw?: number;
+  preMatchPredictedWinner?: string;
 }
 
 export interface GroupStanding {
@@ -97,4 +104,16 @@ export interface GoldenBootPlayer {
   teamFlag: string;
   goals: number; // accumulated total goals across all simulations
   avgGoals: number; // average goals per simulation
+  realGoals?: number; // actual goals from real match entries
+}
+
+export interface GoldenGlovePlayer {
+  playerId: string;
+  name: string;
+  teamId: string;
+  teamName: string;
+  teamFlag: string;
+  cleanSheets: number; // number of clean sheets
+  saves: number; // number of saves
+  rating: number; // overall GK rating
 }

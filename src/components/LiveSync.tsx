@@ -108,14 +108,28 @@ Return format:
     "FRA": 2118,
     "BRA": 2087
   }
-}
+}`
+};
 
-If no matches played yet, return: {"updatedElo": {}}`,
+const PROMPTS_EXTENDED = {
+  ...PROMPTS,
+  form: `You are a FIFA World Cup 2026 team form analyst. Return only valid JSON, no markdown.
+
+Today is ${TODAY}. Return the recent form (last 5 matches played in international friendlies / qualifiers, e.g. ["W", "D", "W", "L", "W"]) for all 48 World Cup 2026 teams.
+
+Return format:
+{
+  "forms": {
+    "ARG": ["W", "W", "W", "D", "W"],
+    "FRA": ["W", "D", "W", "W", "W"],
+    "MEX": ["W", "L", "D", "W", "W"]
+  }
+}`
 };
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export type LiveSyncType = 'results' | 'performances' | 'injuries' | 'elo';
+export type LiveSyncType = 'results' | 'performances' | 'injuries' | 'elo' | 'form';
 
 interface SyncStatus {
   lastSync?: string;
@@ -133,6 +147,7 @@ const SYNC_LABELS: Record<LiveSyncType, { label: string; emoji: string }> = {
   performances: { label: 'Performances', emoji: '📊' },
   injuries:     { label: 'Injuries',     emoji: '🏥' },
   elo:          { label: 'Elo Ratings',  emoji: '📈' },
+  form:         { label: 'Recent Form',  emoji: '📝' },
 };
 
 export default function LiveSync({ onUpdate, hasLiveData = false }: LiveSyncProps) {
@@ -142,6 +157,7 @@ export default function LiveSync({ onUpdate, hasLiveData = false }: LiveSyncProp
     performances: {},
     injuries: {},
     elo: {},
+    form: {},
   });
   const [expanded, setExpanded] = useState(false);
 
@@ -169,7 +185,7 @@ export default function LiveSync({ onUpdate, hasLiveData = false }: LiveSyncProp
             },
             {
               role: 'user',
-              content: PROMPTS[type],
+              content: PROMPTS_EXTENDED[type],
             },
           ],
           temperature: 0.1,
@@ -202,6 +218,8 @@ export default function LiveSync({ onUpdate, hasLiveData = false }: LiveSyncProp
         count = (d.injuries?.length ?? 0) + (d.suspensions?.length ?? 0);
       } else if (type === 'elo' && typeof parsed === 'object' && parsed !== null && 'updatedElo' in parsed) {
         count = Object.keys((parsed as { updatedElo: Record<string, number> }).updatedElo).length;
+      } else if (type === 'form' && typeof parsed === 'object' && parsed !== null && 'forms' in parsed) {
+        count = Object.keys((parsed as { forms: Record<string, string[]> }).forms).length;
       }
 
       setStatuses(prev => ({

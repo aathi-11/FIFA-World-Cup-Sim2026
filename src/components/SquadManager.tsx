@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { Team, Player, PlayerPosition } from '../types';
 import { Search, ShieldAlert, Award, Star, Activity, Ban } from 'lucide-react';
 import { calculateTeamStrength } from '../utils/simulation';
+import { Flag } from './Flag';
 
 interface SquadManagerProps {
   teams: Team[];
@@ -72,7 +73,7 @@ export const SquadManager: React.FC<SquadManagerProps> = ({ teams, playersDb, on
               onClick={() => setSelectedTeamId(team.id)}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span className="flag-icon">{team.flag}</span>
+                <Flag teamId={team.id} style={{ fontSize: '1.2rem', marginRight: 0 }} />
                 <div>
                   <div className="team-list-name">{team.name}</div>
                   <div className="team-list-meta">Group {team.group} • Rank #{team.fifaRank}</div>
@@ -99,7 +100,7 @@ export const SquadManager: React.FC<SquadManagerProps> = ({ teams, playersDb, on
         {/* Squad Header Info */}
         <div className="squad-header">
           <div className="squad-header-info">
-            <span style={{ fontSize: '3rem' }}>{selectedTeam.flag}</span>
+            <Flag teamId={selectedTeam.id} style={{ width: '80px', height: '55px', fontSize: '3rem', marginRight: '16px' }} />
             <div>
               <h2 className="squad-header-name">{selectedTeam.name}</h2>
               <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>

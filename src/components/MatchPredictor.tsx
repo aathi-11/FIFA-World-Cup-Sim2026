@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Team, Player } from '../types';
 import { Percent, Star, Sparkles } from 'lucide-react';
+import { Flag } from './Flag';
 import { 
   calculateTeamStrength, 
   getPositionalSQI, 
@@ -135,7 +136,7 @@ export const MatchPredictor: React.FC<MatchPredictorProps> = ({ teams, playersDb
       {/* Team Selection Bar */}
       <div className="h2h-selector">
         <div className="h2h-select-team">
-          <span style={{ fontSize: '2.5rem' }}>{homeTeam.flag}</span>
+          <Flag teamId={homeTeam.id} style={{ width: '80px', height: '55px', fontSize: '2.5rem', marginRight: 0 }} />
           <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Select Home Team</label>
           <select 
             value={homeId} 
@@ -156,7 +157,7 @@ export const MatchPredictor: React.FC<MatchPredictorProps> = ({ teams, playersDb
         <div className="vs-badge">VS</div>
 
         <div className="h2h-select-team">
-          <span style={{ fontSize: '2.5rem' }}>{awayTeam.flag}</span>
+          <Flag teamId={awayTeam.id} style={{ width: '80px', height: '55px', fontSize: '2.5rem', marginRight: 0 }} />
           <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Select Away Team</label>
           <select 
             value={awayId} 

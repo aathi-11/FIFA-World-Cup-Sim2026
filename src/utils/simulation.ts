@@ -481,10 +481,43 @@ export const simulateMatch = (
   }
   
   // --- DYNAMIC INJURY & SUSPENSION EVENTS ---
-  // Injury chance: 3% per player in the match lineup (starting 11 players of each team)
-  const homeLineup = homeSquad.filter(p => !p.injured && !p.suspended).slice(0, 11);
-  const awayLineup = awaySquad.filter(p => !p.injured && !p.suspended).slice(0, 11);
+  // Select a realistic starting 11 lineup: 1 GK, 4 DEF, 3 MID, 3 FWD (or fallbacks if active pool is thin)
+  const activeHomeGKs = homeSquad.filter(p => p.position === 'GK' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  const activeHomeDEFs = homeSquad.filter(p => p.position === 'DEF' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  const activeHomeMIDs = homeSquad.filter(p => p.position === 'MID' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  const activeHomeFWDs = homeSquad.filter(p => p.position === 'FWD' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
   
+  const homeLineup = [
+    ...activeHomeGKs.slice(0, 1),
+    ...activeHomeDEFs.slice(0, 4),
+    ...activeHomeMIDs.slice(0, 3),
+    ...activeHomeFWDs.slice(0, 3)
+  ];
+  
+  // Settle any remaining open slots in starting 11 using active backups in case of severe injuries
+  const allActiveHome = homeSquad.filter(p => !p.injured && !p.suspended && !homeLineup.some(selected => selected.id === p.id));
+  while (homeLineup.length < 11 && allActiveHome.length > 0) {
+    homeLineup.push(allActiveHome.shift()!);
+  }
+
+  const activeAwayGKs = awaySquad.filter(p => p.position === 'GK' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  const activeAwayDEFs = awaySquad.filter(p => p.position === 'DEF' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  const activeAwayMIDs = awaySquad.filter(p => p.position === 'MID' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  const activeAwayFWDs = awaySquad.filter(p => p.position === 'FWD' && !p.injured && !p.suspended).sort((a, b) => b.rating - a.rating);
+  
+  const awayLineup = [
+    ...activeAwayGKs.slice(0, 1),
+    ...activeAwayDEFs.slice(0, 4),
+    ...activeAwayMIDs.slice(0, 3),
+    ...activeAwayFWDs.slice(0, 3)
+  ];
+  
+  const allActiveAway = awaySquad.filter(p => !p.injured && !p.suspended && !awayLineup.some(selected => selected.id === p.id));
+  while (awayLineup.length < 11 && allActiveAway.length > 0) {
+    awayLineup.push(allActiveAway.shift()!);
+  }
+
+  // Injury chance: 3% per player in the match lineup
   homeLineup.forEach(p => {
     if (Math.random() < 0.03) {
       p.injured = true;
@@ -503,16 +536,22 @@ export const simulateMatch = (
     }
   });
   
-  // Track goalscorers
+  // Track goalscorers (FWDs and MIDs have much higher priority, GK never scores unless absolute fallback)
   if (goalsHome > 0) {
     const scorers = homeLineup.filter(p => p.position === 'FWD' || p.position === 'MID');
-    const scorer = scorers.length > 0 ? scorers[Math.floor(Math.random() * scorers.length)] : homeSquad[0];
+    const fallbackScorers = homeSquad.filter(p => (p.position === 'FWD' || p.position === 'MID') && !p.injured && !p.suspended);
+    const scorer = scorers.length > 0 
+      ? scorers[Math.floor(Math.random() * scorers.length)] 
+      : (fallbackScorers.length > 0 ? fallbackScorers[Math.floor(Math.random() * fallbackScorers.length)] : homeSquad.find(p => p.position !== 'GK') || homeSquad[0]);
     if (scorer) scorer.goalsScored = (scorer.goalsScored || 0) + goalsHome;
   }
   
   if (goalsAway > 0) {
     const scorers = awayLineup.filter(p => p.position === 'FWD' || p.position === 'MID');
-    const scorer = scorers.length > 0 ? scorers[Math.floor(Math.random() * scorers.length)] : awaySquad[0];
+    const fallbackScorers = awaySquad.filter(p => (p.position === 'FWD' || p.position === 'MID') && !p.injured && !p.suspended);
+    const scorer = scorers.length > 0 
+      ? scorers[Math.floor(Math.random() * scorers.length)] 
+      : (fallbackScorers.length > 0 ? fallbackScorers[Math.floor(Math.random() * fallbackScorers.length)] : awaySquad.find(p => p.position !== 'GK') || awaySquad[0]);
     if (scorer) scorer.goalsScored = (scorer.goalsScored || 0) + goalsAway;
   }
   

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Team } from '../types';
 import { Trophy, Calendar, MapPin, Play, TrendingUp, Users } from 'lucide-react';
+import { Flag } from './Flag';
 
 interface DashboardProps {
   teams: Team[];
@@ -117,7 +118,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ teams, onSelectTab }) => {
                   <div key={team.id} className="favorite-item">
                     <div className="favorite-team-info">
                       <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: varTextColor(idx), width: '20px' }}>{idx + 1}</span>
-                      <span className="flag-icon">{team.flag}</span>
+                      <Flag teamId={team.id} style={{ fontSize: '1.25rem', marginRight: '6px' }} />
                       <div>
                         <span className="favorite-name">{team.name}</span>
                         <div className="favorite-rating">Elo Rating: {team.elo} • FIFA Rank: #{team.fifaRank}</div>

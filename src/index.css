@@ -1523,3 +1523,47 @@ h1, h2, h3, h4, h5, h6 {
 .prob-delta-down svg {
   flex-shrink: 0;
 }
+
+/* Match Status Badges in Schedule */
+.match-status-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  display: inline-block;
+  vertical-align: middle;
+}
+.match-status-ft {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-success);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+.match-status-sim {
+  background: rgba(79, 172, 254, 0.12);
+  color: #4facfe;
+  border: 1px solid rgba(79, 172, 254, 0.25);
+}
+.match-status-pred {
+  background: rgba(0, 242, 254, 0.1);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+}
+.schedule-row {
+  transition: background 0.15s ease;
+}
+.schedule-row:hover {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* ── Hide Number Input Spinner Controls ────────────────────────────────── */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+}

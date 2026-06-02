@@ -2044,7 +2044,7 @@ const ScheduleMatchRow: React.FC<{
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {sorted.map(player => {
-          const r = ratings[player.id] || { rating: 6.0, goals: 0, assists: 0, injured: false, redCard: false };
+          const r = ratings[player.id] || { rating: 6.0, goals: 0, assists: 0, injured: false, redCard: false, saves: 0, cleanSheet: false };
           const ratingVal = r.rating;
 
           const ratingColor = ratingVal >= 9.0 ? '#d4af37'   // Gold

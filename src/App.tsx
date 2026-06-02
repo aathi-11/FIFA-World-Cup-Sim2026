@@ -188,109 +188,107 @@ function App() {
       const perfs = d.performances ?? (Array.isArray(data) ? data as PlayerPerformance[] : []);
       setLivePerformances(perfs);
 
-      // Permanent player ratings update based on match performances!
-      setPlayersDb(prevDb => {
-        const nextDb = { ...prevDb };
-        const playerUpserts: any[] = [];
-        
-        perfs.forEach(pPerf => {
-          const teamId = pPerf.team;
-          const squad = nextDb[teamId];
-          if (squad) {
-            nextDb[teamId] = squad.map(player => {
-              if (player.name.toLowerCase() === pPerf.playerName.toLowerCase()) {
-                // Determine rating delta from form multiplier
-                let ratingDelta = 0;
-                if (pPerf.formMultiplier >= 1.25) ratingDelta = 2;
-                else if (pPerf.formMultiplier >= 1.1) ratingDelta = 1;
-                else if (pPerf.formMultiplier <= 0.75) ratingDelta = -2;
-                else if (pPerf.formMultiplier <= 0.88) ratingDelta = -1;
+      // 1. Calculate player states and database upserts
+      const playerUpserts: any[] = [];
+      const nextDb = { ...playersDb };
+      
+      perfs.forEach(pPerf => {
+        const teamId = pPerf.team;
+        const squad = nextDb[teamId];
+        if (squad) {
+          nextDb[teamId] = squad.map(player => {
+            if (player.name.toLowerCase() === pPerf.playerName.toLowerCase()) {
+              let ratingDelta = 0;
+              if (pPerf.formMultiplier >= 1.25) ratingDelta = 2;
+              else if (pPerf.formMultiplier >= 1.1) ratingDelta = 1;
+              else if (pPerf.formMultiplier <= 0.75) ratingDelta = -2;
+              else if (pPerf.formMultiplier <= 0.88) ratingDelta = -1;
 
-                // Goal & Assist bonus
-                if (pPerf.goals > 0) ratingDelta += pPerf.goals;
-                if (pPerf.assists > 0) ratingDelta += Math.round(pPerf.assists * 0.5);
+              if (pPerf.goals > 0) ratingDelta += pPerf.goals;
+              if (pPerf.assists > 0) ratingDelta += Math.round(pPerf.assists * 0.5);
 
-                const nextRating = Math.max(45, Math.min(98, player.rating + ratingDelta));
-                const newGoals = (player.goalsScored || 0) + pPerf.goals;
-                const newAssists = (player.assists || 0) + pPerf.assists;
-                const newCleanSheets = (player.cleanSheets || 0) + (player.position === 'GK' && pPerf.goals === 0 ? 1 : 0);
-                const newSaves = (player.saves || 0) + (player.position === 'GK' ? 3 : 0);
+              const nextRating = Math.max(45, Math.min(98, player.rating + ratingDelta));
+              const newGoals = (player.goalsScored || 0) + pPerf.goals;
+              const newAssists = (player.assists || 0) + pPerf.assists;
+              const newCleanSheets = (player.cleanSheets || 0) + (player.position === 'GK' && pPerf.goals === 0 ? 1 : 0);
+              const newSaves = (player.saves || 0) + (player.position === 'GK' ? 3 : 0);
 
-                playerUpserts.push({
-                  player_id: player.id,
-                  team_id: teamId,
-                  player_name: player.name,
-                  rating: nextRating,
-                  form: pPerf.formMultiplier,
-                  injured: pPerf.injured ?? player.injured,
-                  suspended: pPerf.redCard ?? player.suspended,
-                  goals_scored: newGoals,
-                  assists: newAssists,
-                  clean_sheets: newCleanSheets,
-                  saves: newSaves
-                });
+              playerUpserts.push({
+                player_id: player.id,
+                team_id: teamId,
+                player_name: player.name,
+                rating: nextRating,
+                form: pPerf.formMultiplier,
+                injured: pPerf.injured ?? player.injured,
+                suspended: pPerf.redCard ?? player.suspended,
+                goals_scored: newGoals,
+                assists: newAssists,
+                clean_sheets: newCleanSheets,
+                saves: newSaves
+              });
 
-                return {
-                  ...player,
-                  rating: nextRating,
-                  injured: pPerf.injured ?? player.injured,
-                  suspended: pPerf.redCard ?? player.suspended,
-                  form: pPerf.formMultiplier,
-                  goalsScored: newGoals,
-                  assists: newAssists,
-                  cleanSheets: newCleanSheets,
-                  saves: newSaves
-                };
-              }
-              return player;
-            });
-          }
-        });
-
-        if (playerUpserts.length > 0) {
-          supabase.from('player_states').upsert(playerUpserts).then(({ error }) => {
-            if (error) console.error('Error batch upserting player states to Supabase:', error.message);
-            else console.log(`Successfully synced ${playerUpserts.length} player states to Supabase.`);
+              return {
+                ...player,
+                rating: nextRating,
+                injured: pPerf.injured ?? player.injured,
+                suspended: pPerf.redCard ?? player.suspended,
+                form: pPerf.formMultiplier,
+                goalsScored: newGoals,
+                assists: newAssists,
+                cleanSheets: newCleanSheets,
+                saves: newSaves
+              };
+            }
+            return player;
           });
         }
-
-        return nextDb;
       });
+
+      // 2. Set React state
+      setPlayersDb(nextDb);
+
+      // 3. Upsert to Supabase outside of state updater
+      if (playerUpserts.length > 0) {
+        supabase.from('player_states').upsert(playerUpserts, { onConflict: 'player_id' }).then(({ error }) => {
+          if (error) console.error('Error batch upserting player states to Supabase:', error.message);
+          else console.log(`Successfully synced ${playerUpserts.length} player states to Supabase.`);
+        });
+      }
     }
     if (type === 'elo') {
       const d = data as { updatedElo?: EloUpdate };
       const newElos = d.updatedElo ?? (typeof data === 'object' && data !== null ? data as EloUpdate : {});
       setLiveElo(newElos);
 
-      // Permanently update baseline and current ELO in teams state!
-      setTeams(prevTeams => {
-        const teamUpserts: any[] = [];
-        const updated = prevTeams.map(t => {
-          if (newElos[t.id]) {
-            const nextElo = newElos[t.id];
-            teamUpserts.push({
-              team_id: t.id,
-              elo: nextElo,
-              recent_form: t.recentForm
-            });
-            return {
-              ...t,
-              elo: nextElo,
-              baselineElo: nextElo
-            };
-          }
-          return t;
-        });
-
-        if (teamUpserts.length > 0) {
-          supabase.from('team_states').upsert(teamUpserts).then(({ error }) => {
-            if (error) console.error('Error batch upserting team Elos to Supabase:', error.message);
-            else console.log(`Successfully synced ${teamUpserts.length} team Elo ratings to Supabase.`);
+      // 1. Calculate database upserts and updated teams
+      const teamUpserts: any[] = [];
+      const nextTeams = teams.map(t => {
+        if (newElos[t.id]) {
+          const nextElo = newElos[t.id];
+          teamUpserts.push({
+            team_id: t.id,
+            elo: nextElo,
+            recent_form: t.recentForm
           });
+          return {
+            ...t,
+            elo: nextElo,
+            baselineElo: nextElo
+          };
         }
-
-        return updated;
+        return t;
       });
+
+      // 2. Set React state
+      setTeams(nextTeams);
+
+      // 3. Upsert to Supabase
+      if (teamUpserts.length > 0) {
+        supabase.from('team_states').upsert(teamUpserts, { onConflict: 'team_id' }).then(({ error }) => {
+          if (error) console.error('Error batch upserting team Elos to Supabase:', error.message);
+          else console.log(`Successfully synced ${teamUpserts.length} team Elo ratings to Supabase.`);
+        });
+      }
     }
     if (type === 'injuries') {
       const d = data as Partial<LiveInjuries>;
@@ -298,123 +296,123 @@ function App() {
       const suspensions = d.suspensions ?? [];
       setLiveInjuries({ injuries, suspensions });
 
-      // Permanently mark injured/suspended players in playersDb!
-      setPlayersDb(prevDb => {
-        const nextDb = { ...prevDb };
-        const playerUpserts: any[] = [];
-        
-        // Reset all player injuries/suspensions first for full sync reliability
-        Object.keys(nextDb).forEach(teamId => {
-          nextDb[teamId] = nextDb[teamId].map(p => ({
-            ...p,
-            injured: false,
-            suspended: false,
-            suspensionRoundsRemaining: 0,
-            form: 1.0
-          }));
-        });
+      // 1. Calculate database upserts and updated player states
+      const playerUpserts: any[] = [];
+      const nextDb = { ...playersDb };
+      
+      // Reset all player injuries/suspensions first for full sync reliability
+      Object.keys(nextDb).forEach(teamId => {
+        nextDb[teamId] = nextDb[teamId].map(p => ({
+          ...p,
+          injured: false,
+          suspended: false,
+          suspensionRoundsRemaining: 0,
+          form: 1.0
+        }));
+      });
 
-        injuries.forEach(inj => {
-          const teamId = inj.team;
-          const squad = nextDb[teamId];
-          if (squad) {
-            nextDb[teamId] = squad.map(p => {
-              if (p.name.toLowerCase() === inj.playerName.toLowerCase()) {
-                const nextP = { ...p, injured: true, form: 0.0 };
-                playerUpserts.push({
-                  player_id: nextP.id,
-                  team_id: teamId,
-                  player_name: nextP.name,
-                  rating: nextP.rating,
-                  form: nextP.form,
-                  injured: nextP.injured,
-                  suspended: nextP.suspended,
-                  goals_scored: nextP.goalsScored || 0,
-                  assists: nextP.assists || 0,
-                  clean_sheets: nextP.cleanSheets || 0,
-                  saves: nextP.saves || 0
-                });
-                return nextP;
-              }
-              return p;
-            });
-          }
-        });
-
-        suspensions.forEach(susp => {
-          const teamId = susp.team;
-          const squad = nextDb[teamId];
-          if (squad) {
-            nextDb[teamId] = squad.map(p => {
-              if (p.name.toLowerCase() === susp.playerName.toLowerCase()) {
-                const nextP = { 
-                  ...p, 
-                  suspended: true, 
-                  suspensionRoundsRemaining: susp.matchesMissed, 
-                  form: 0.0 
-                };
-                playerUpserts.push({
-                  player_id: nextP.id,
-                  team_id: teamId,
-                  player_name: nextP.name,
-                  rating: nextP.rating,
-                  form: nextP.form,
-                  injured: nextP.injured,
-                  suspended: nextP.suspended,
-                  goals_scored: nextP.goalsScored || 0,
-                  assists: nextP.assists || 0,
-                  clean_sheets: nextP.cleanSheets || 0,
-                  saves: nextP.saves || 0
-                });
-                return nextP;
-              }
-              return p;
-            });
-          }
-        });
-
-        if (playerUpserts.length > 0) {
-          supabase.from('player_states').upsert(playerUpserts).then(({ error }) => {
-            if (error) console.error('Error batch upserting injury player states to Supabase:', error.message);
-            else console.log(`Successfully synced ${playerUpserts.length} injury/suspension player states to Supabase.`);
+      injuries.forEach(inj => {
+        const teamId = inj.team;
+        const squad = nextDb[teamId];
+        if (squad) {
+          nextDb[teamId] = squad.map(p => {
+            if (p.name.toLowerCase() === inj.playerName.toLowerCase()) {
+              const nextP = { ...p, injured: true, form: 0.0 };
+              playerUpserts.push({
+                player_id: nextP.id,
+                team_id: teamId,
+                player_name: nextP.name,
+                rating: nextP.rating,
+                form: nextP.form,
+                injured: nextP.injured,
+                suspended: nextP.suspended,
+                goals_scored: nextP.goalsScored || 0,
+                assists: nextP.assists || 0,
+                clean_sheets: nextP.cleanSheets || 0,
+                saves: nextP.saves || 0
+              });
+              return nextP;
+            }
+            return p;
           });
         }
-
-        return nextDb;
       });
+
+      suspensions.forEach(susp => {
+        const teamId = susp.team;
+        const squad = nextDb[teamId];
+        if (squad) {
+          nextDb[teamId] = squad.map(p => {
+            if (p.name.toLowerCase() === susp.playerName.toLowerCase()) {
+              const nextP = { 
+                ...p, 
+                suspended: true, 
+                suspensionRoundsRemaining: susp.matchesMissed, 
+                form: 0.0 
+              };
+              playerUpserts.push({
+                player_id: nextP.id,
+                team_id: teamId,
+                player_name: nextP.name,
+                rating: nextP.rating,
+                form: nextP.form,
+                injured: nextP.injured,
+                suspended: nextP.suspended,
+                goals_scored: nextP.goalsScored || 0,
+                assists: nextP.assists || 0,
+                clean_sheets: nextP.cleanSheets || 0,
+                saves: nextP.saves || 0
+              });
+              return nextP;
+            }
+            return p;
+          });
+        }
+      });
+
+      // 2. Set React state
+      setPlayersDb(nextDb);
+
+      // 3. Upsert to Supabase
+      if (playerUpserts.length > 0) {
+        supabase.from('player_states').upsert(playerUpserts, { onConflict: 'player_id' }).then(({ error }) => {
+          if (error) console.error('Error batch upserting injury player states to Supabase:', error.message);
+          else console.log(`Successfully synced ${playerUpserts.length} injury/suspension player states to Supabase.`);
+        });
+      }
     }
     if (type === 'form') {
       const d = data as { forms?: Record<string, string[]> };
       const forms = d.forms ?? (typeof data === 'object' && data !== null ? data as Record<string, string[]> : {});
       
-      // Permanently update team forms in the teams state!
-      setTeams(prevTeams => {
-        const teamUpserts: any[] = [];
-        const updated = prevTeams.map(t => {
-          if (forms[t.id]) {
-            const nextForm = forms[t.id];
-            teamUpserts.push({
-              team_id: t.id,
-              elo: t.elo,
-              recent_form: nextForm
-            });
-            return {
-              ...t,
-              recentForm: nextForm
-            };
-          }
-          return t;
-        });
-
-        if (teamUpserts.length > 0) {
-          supabase.from('team_states').upsert(teamUpserts).then(({ error }) => {
-            if (error) console.error('Error batch upserting team forms to Supabase:', error.message);
-            else console.log(`Successfully synced ${teamUpserts.length} team recent forms to Supabase.`);
+      // 1. Calculate database upserts and updated teams
+      const teamUpserts: any[] = [];
+      const nextTeams = teams.map(t => {
+        if (forms[t.id]) {
+          const nextForm = forms[t.id];
+          teamUpserts.push({
+            team_id: t.id,
+            elo: t.elo,
+            recent_form: nextForm
           });
+          return {
+            ...t,
+            recentForm: nextForm
+          };
         }
-
-        return updated;
+        return t;
       });
+
+      // 2. Set React state
+      setTeams(nextTeams);
+
+      // 3. Upsert to Supabase
+      if (teamUpserts.length > 0) {
+        supabase.from('team_states').upsert(teamUpserts, { onConflict: 'team_id' }).then(({ error }) => {
+          if (error) console.error('Error batch upserting team forms to Supabase:', error.message);
+          else console.log(`Successfully synced ${teamUpserts.length} team recent forms to Supabase.`);
+        });
+      }
     }
   };
 
@@ -501,7 +499,7 @@ function App() {
           pre_match_prob_away: probs.awayWin,
           pre_match_prob_draw: probs.draw,
           pre_match_predicted_winner: predictedWinner
-        }).then(({ error }) => {
+        }, { onConflict: 'match_id' }).then(({ error }) => {
           if (error) console.error('Error upserting match to Supabase:', error.message);
         });
       }
@@ -558,7 +556,7 @@ function App() {
                 assists: newAssists,
                 clean_sheets: newCleanSheets,
                 saves: newSaves
-              }).then(({ error }) => {
+              }, { onConflict: 'player_id' }).then(({ error }) => {
                 if (error) console.error('Error upserting player state to Supabase:', error.message);
                 else console.log(`✅ Saved ${player.name} stats to Supabase`);
               });

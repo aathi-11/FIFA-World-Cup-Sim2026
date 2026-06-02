@@ -1,5 +1,5 @@
 import React from 'react';
-import { HelpCircle, ChevronRight, AlertTriangle, CheckCircle } from 'lucide-react';
+import { HelpCircle, ChevronRight, AlertTriangle, CheckCircle, Database, GitMerge, Activity, RefreshCw } from 'lucide-react';
 
 export const ModelExplanation: React.FC = () => {
   return (
@@ -12,11 +12,199 @@ export const ModelExplanation: React.FC = () => {
           How the Prediction Engine Works
         </h2>
         <p style={{ color: 'var(--text-secondary)', lineHeight: '1.6', fontSize: '0.95rem' }}>
-          Predicting sports matches is a combination of assessing team strengths, accounting for current lineups (player forms and injuries), and simulating the inherent randomness (entropy) of the game. Our engine uses a state-of-the-art **Bivariate Poisson Process** coupled with dynamic **Squad Quality Indices** to simulate matches.
+          Predicting sports matches is a combination of assessing team strengths, accounting for current lineups (player forms and injuries), and simulating the inherent randomness (entropy) of the game. Our engine uses an advanced **4-Model Ensemble** coupled with dynamic **Squad Quality Indices** to simulate matches.
         </p>
       </div>
 
-      {/* The Core Formula */}
+      {/* ── Visual Architecture Flowchart ── */}
+      <div className="card" style={{ padding: '2rem' }}>
+        <h2 style={{ fontSize: '1.5rem', marginBottom: '2rem', fontFamily: 'var(--font-heading)', color: 'var(--accent-gold)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Activity style={{ color: 'var(--accent-gold)' }} />
+          Model Architecture & Data Flow
+        </h2>
+
+        {/* Embedded Style Block for Flowchart */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          .math-flow-chart {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            margin: 1rem 0;
+            font-family: 'Inter', sans-serif;
+          }
+          .flow-node {
+            background: rgba(30, 41, 59, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 14px 20px;
+            text-align: center;
+            width: 100%;
+            max-width: 650px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.18);
+            backdrop-filter: blur(12px);
+            transition: all 0.2s ease-in-out;
+          }
+          .flow-node:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.15);
+          }
+          .flow-node-header {
+            font-weight: 700;
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+            font-family: 'Outfit', sans-serif;
+            letter-spacing: 0.03em;
+          }
+          .flow-node-sub {
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+          }
+          .flow-grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            width: 100%;
+            max-width: 900px;
+          }
+          .flow-grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            width: 100%;
+            max-width: 900px;
+          }
+          .flow-arrow-vert {
+            width: 2px;
+            height: 20px;
+            background: linear-gradient(180deg, var(--text-muted) 0%, rgba(255,255,255,0.1) 100%);
+            position: relative;
+          }
+          .flow-arrow-vert::after {
+            content: '▼';
+            position: absolute;
+            bottom: -6px;
+            left: -4.5px;
+            font-size: 8px;
+            color: var(--text-muted);
+          }
+          @media (max-width: 768px) {
+            .flow-grid-4, .flow-grid-3 {
+              grid-template-columns: 1fr;
+            }
+          }
+        ` }} />
+
+        <div className="math-flow-chart">
+          
+          {/* Real-world inputs Node */}
+          <div className="flow-node" style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
+            <div className="flow-node-header" style={{ color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <Database style={{ width: '16px', height: '16px', color: 'var(--text-muted)' }} />
+              Real-world inputs
+            </div>
+            <div className="flow-node-sub">Elo ratings • squad strength • form • head-to-head • rest days • injuries</div>
+          </div>
+
+          <div className="flow-arrow-vert"></div>
+
+          {/* 4 Models Grid */}
+          <div className="flow-grid-4">
+            <div className="flow-node" style={{ border: '1px solid rgba(59, 130, 246, 0.35)', background: 'rgba(59, 130, 246, 0.05)', color: '#93c5fd' }}>
+              <div className="flow-node-header">Model 1</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '2px', color: '#fff' }}>Bayesian Elo</div>
+              <div style={{ fontSize: '0.72rem', color: '#93c5fd', opacity: 0.85 }}>Win probability</div>
+              <div style={{ fontSize: '0.68rem', color: '#cbd5e1', marginTop: '6px', fontFamily: 'monospace' }}>P(win/draw/loss)</div>
+            </div>
+
+            <div className="flow-node" style={{ border: '1px solid rgba(16, 185, 129, 0.35)', background: 'rgba(16, 185, 129, 0.05)', color: '#6ee7b7' }}>
+              <div className="flow-node-header">Model 2</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '2px', color: '#fff' }}>Dixon-Coles</div>
+              <div style={{ fontSize: '0.72rem', color: '#6ee7b7', opacity: 0.85 }}>Scoreline dist.</div>
+              <div style={{ fontSize: '0.68rem', color: '#cbd5e1', marginTop: '6px', fontFamily: 'monospace' }}>P(score = a:b)</div>
+            </div>
+
+            <div className="flow-node" style={{ border: '1px solid rgba(139, 92, 246, 0.35)', background: 'rgba(139, 92, 246, 0.05)', color: '#c084fc' }}>
+              <div className="flow-node-header">Model 3</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '2px', color: '#fff' }}>Bradley-Terry</div>
+              <div style={{ fontSize: '0.72rem', color: '#c084fc', opacity: 0.85 }}>Relative strength</div>
+              <div style={{ fontSize: '0.68rem', color: '#cbd5e1', marginTop: '6px', fontFamily: 'monospace' }}>strength ratio</div>
+            </div>
+
+            <div className="flow-node" style={{ border: '1px solid rgba(245, 158, 11, 0.35)', background: 'rgba(245, 158, 11, 0.05)', color: '#fde047' }}>
+              <div className="flow-node-header">Model 4</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '2px', color: '#fff' }}>Bivariate Poisson</div>
+              <div style={{ fontSize: '0.72rem', color: '#fde047', opacity: 0.85 }}>Correlated goals</div>
+              <div style={{ fontSize: '0.68rem', color: '#cbd5e1', marginTop: '6px', fontFamily: 'monospace' }}>joint goal dist.</div>
+            </div>
+          </div>
+
+          <div className="flow-arrow-vert"></div>
+
+          {/* Weighted Ensemble Node */}
+          <div className="flow-node" style={{ border: '1px solid rgba(239, 68, 68, 0.35)', background: 'rgba(239, 68, 68, 0.05)', color: '#fca5a5' }}>
+            <div className="flow-node-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <GitMerge style={{ width: '16px', height: '16px', color: '#fca5a5' }} />
+              Weighted ensemble
+            </div>
+            <div className="flow-node-sub" style={{ color: '#fed7d7' }}>Elo 35% • DC 30% • BT 20% • BP 15%</div>
+          </div>
+
+          <div className="flow-arrow-vert"></div>
+
+          {/* Per-match probability Node */}
+          <div className="flow-node" style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+            <div className="flow-node-header" style={{ color: '#fff' }}>Per-match probability distribution</div>
+            <div className="flow-node-sub" style={{ fontFamily: 'monospace', fontSize: '0.74rem' }}>P(home win) • P(draw) • P(away win) • E[goals]</div>
+          </div>
+
+          <div className="flow-arrow-vert"></div>
+
+          {/* Monte Carlo Node */}
+          <div className="flow-node" style={{ border: '1px solid rgba(16, 185, 129, 0.45)', background: 'rgba(16, 185, 129, 0.12)', color: '#a7f3d0' }}>
+            <div className="flow-node-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <Activity style={{ width: '16px', height: '16px', color: 'var(--accent-success)' }} />
+              Monte Carlo × 10,000
+            </div>
+            <div className="flow-node-sub" style={{ color: '#d1fae5' }}>Samples ensemble dist. • skips locked matches</div>
+          </div>
+
+          <div className="flow-arrow-vert"></div>
+
+          {/* Outputs Grid */}
+          <div className="flow-grid-3">
+            <div className="flow-node" style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#fff', marginBottom: '4px' }}>Championship %</div>
+              <div className="flow-node-sub">All 48 teams ranked</div>
+            </div>
+
+            <div className="flow-node" style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#fff', marginBottom: '4px' }}>Bracket paths</div>
+              <div className="flow-node-sub">Most likely semifinals</div>
+            </div>
+
+            <div className="flow-node" style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#fff', marginBottom: '4px' }}>Upset probability</div>
+              <div className="flow-node-sub">vs actual result</div>
+            </div>
+          </div>
+
+          <div className="flow-arrow-vert"></div>
+
+          {/* Ground Truth loop Node */}
+          <div className="flow-node" style={{ border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(220, 38, 38, 0.12)', color: '#fca5a5', maxWidth: '750px' }}>
+            <div className="flow-node-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <RefreshCw style={{ width: '16px', height: '16px', color: '#fca5a5' }} />
+              After real match: lock result → recalculate Elo → update form multipliers → re-run MC
+            </div>
+            <div className="flow-node-sub" style={{ color: '#fed7d7' }}>Locked matches are ground truth — never re-simulated (Bayesian feedback loop to inputs)</div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* The Core Formula Details */}
       <div className="grid-2">
         <div className="card">
           <h3 style={{ fontSize: '1.25rem', marginBottom: '1rem', color: '#fff', fontFamily: 'var(--font-heading)' }}>1. Dynamic Team Strength</h3>

@@ -20,6 +20,9 @@ import { FixturesAndStandings } from './components/FixturesAndStandings';
 // Icons
 import { Trophy, Users, Sparkles, HelpCircle, Activity, LayoutDashboard, Calendar } from 'lucide-react';
 
+// Analytics
+import { Analytics } from '@vercel/analytics/react';
+
 function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [teams, setTeams] = useState<Team[]>([]);
@@ -883,7 +886,8 @@ function App() {
         {renderActiveTabContent()}
       </main>
 
-
+      {/* Vercel Web Analytics */}
+      <Analytics />
     </div>
   );
 }

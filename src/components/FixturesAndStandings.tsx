@@ -72,26 +72,29 @@ export const FixturesAndStandings: React.FC<FixturesAndStandingsProps> = ({
     const matches: Match[] = [];
     let matchCounter = 1;
 
-    GROUP_LETTERS.forEach(letter => {
-      const groupTeams = teams.filter(t => t.group === letter);
-      if (groupTeams.length < 4) return;
+    const matchPairings = [
+      [0, 1], [2, 3], // Round 1
+      [0, 2], [1, 3], // Round 2
+      [0, 3], [1, 2]  // Round 3
+    ];
 
-      const matchPairings = [
-        [0, 1], [2, 3],
-        [0, 2], [1, 3],
-        [0, 3], [1, 2]
-      ];
+    for (let round = 0; round < 3; round++) {
+      const pair1 = matchPairings[round * 2];
+      const pair2 = matchPairings[round * 2 + 1];
 
-      matchPairings.forEach(([idxHome, idxAway]) => {
-        const home = groupTeams[idxHome];
-        const away = groupTeams[idxAway];
-        const matchId = `G_${letter}_${home.id}_${away.id}`;
-        const schedule = getMatchScheduleInfo(matchCounter, 'GROUP', letter);
+      GROUP_LETTERS.forEach(letter => {
+        const groupTeams = teams.filter(t => t.group === letter);
+        if (groupTeams.length < 4) return;
 
+        // Generate Match 1 of this round for this group
+        const home1 = groupTeams[pair1[0]];
+        const away1 = groupTeams[pair1[1]];
+        const matchId1 = `G_${letter}_${home1.id}_${away1.id}`;
+        const schedule1 = getMatchScheduleInfo(matchCounter, 'GROUP', letter);
         matches.push({
-          id: matchId,
-          homeTeamId: home.id,
-          awayTeamId: away.id,
+          id: matchId1,
+          homeTeamId: home1.id,
+          awayTeamId: away1.id,
           stage: 'GROUP',
           goalsHome: null,
           goalsAway: null,
@@ -101,12 +104,35 @@ export const FixturesAndStandings: React.FC<FixturesAndStandingsProps> = ({
           isSimulated: false,
           groupLetter: letter,
           matchNumber: matchCounter++,
-          date: schedule.date,
-          stadium: schedule.stadium,
-          kickoffTime: schedule.kickoffTime
+          date: schedule1.date,
+          stadium: schedule1.stadium,
+          kickoffTime: schedule1.kickoffTime
+        });
+
+        // Generate Match 2 of this round for this group
+        const home2 = groupTeams[pair2[0]];
+        const away2 = groupTeams[pair2[1]];
+        const matchId2 = `G_${letter}_${home2.id}_${away2.id}`;
+        const schedule2 = getMatchScheduleInfo(matchCounter, 'GROUP', letter);
+        matches.push({
+          id: matchId2,
+          homeTeamId: home2.id,
+          awayTeamId: away2.id,
+          stage: 'GROUP',
+          goalsHome: null,
+          goalsAway: null,
+          shootoutGoalsHome: null,
+          shootoutGoalsAway: null,
+          winnerId: null,
+          isSimulated: false,
+          groupLetter: letter,
+          matchNumber: matchCounter++,
+          date: schedule2.date,
+          stadium: schedule2.stadium,
+          kickoffTime: schedule2.kickoffTime
         });
       });
-    });
+    }
 
     return matches;
   }, [teams]);

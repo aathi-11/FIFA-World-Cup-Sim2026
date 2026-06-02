@@ -765,20 +765,25 @@ export const getMatchScheduleInfo = (
       dateStr = "June 11, 2026";
       timeStr = "17:00 Local";
     } else if (matchNumber === 2) {
-      venueStr = "BMO Field, Toronto";
+      venueStr = "Estadio Akron, Guadalajara";
       dateStr = "June 11, 2026";
       timeStr = "20:00 Local";
     } else if (matchNumber === 3) {
-      venueStr = "SoFi Stadium, Los Angeles";
+      venueStr = "BMO Field, Toronto";
       dateStr = "June 12, 2026";
       timeStr = "18:00 Local";
     } else if (matchNumber === 4) {
-      venueStr = "Estadio Akron, Guadalajara";
+      venueStr = "SoFi Stadium, Los Angeles";
       dateStr = "June 12, 2026";
       timeStr = "21:00 Local";
     } else {
       venueStr = STADIUMS[(matchNumber - 1) % STADIUMS.length];
-      const day = 11 + Math.min(16, Math.floor((matchNumber - 1) / 4.25));
+      let day = 13;
+      if (matchNumber <= 48) {
+        day = 13 + Math.floor((matchNumber - 5) / 4);
+      } else {
+        day = 24 + Math.floor((matchNumber - 49) / 6);
+      }
       dateStr = formatDay(day);
       timeStr = ["13:00 Local", "16:00 Local", "18:00 Local", "21:00 Local"][(matchNumber - 1) % 4];
     }
@@ -897,33 +902,53 @@ export const runFullTournamentSimulation = (
     return m;
   };
   
-  // 1. Simulate Group Stage
+  // 1. Simulate Group Stage Round-by-Round
+  const matchPairings = [
+    [0, 1], [2, 3], // Round 1
+    [0, 2], [1, 3], // Round 2
+    [0, 3], [1, 2]  // Round 3
+  ];
+
+  const groupMatchesByLetter: Record<string, Match[]> = {};
+  groupLetters.forEach(letter => {
+    groupMatchesByLetter[letter] = [];
+  });
+
+  for (let round = 0; round < 3; round++) {
+    const pair1 = matchPairings[round * 2];
+    const pair2 = matchPairings[round * 2 + 1];
+
+    groupLetters.forEach(letter => {
+      const groupTeams = teams.filter(t => t.group === letter);
+      if (groupTeams.length < 4) return;
+
+      // Match 1 of this round for this group
+      const home1 = groupTeams[pair1[0]];
+      const away1 = groupTeams[pair1[1]];
+      const matchId1 = `G_${letter}_${home1.id}_${away1.id}`;
+      const m1 = executeMatchWithLogic(matchId1, home1, away1, 'GROUP', letter);
+      groupMatchesByLetter[letter].push(m1);
+      matches.push(m1);
+
+      // Match 2 of this round for this group
+      const home2 = groupTeams[pair2[0]];
+      const away2 = groupTeams[pair2[1]];
+      const matchId2 = `G_${letter}_${home2.id}_${away2.id}`;
+      const m2 = executeMatchWithLogic(matchId2, home2, away2, 'GROUP', letter);
+      groupMatchesByLetter[letter].push(m2);
+      matches.push(m2);
+    });
+
+    // Clear suspensions after each round of matches is completed
+    tickSuspensions(playersDb);
+  }
+
+  // Calculate final group standings
   groupLetters.forEach(letter => {
     const groupTeams = teams.filter(t => t.group === letter);
-    const groupMatches: Match[] = [];
-    
-    // Deterministic match pairing indices (6 matches)
-    const matchPairings = [
-      [0, 1], [2, 3],
-      [0, 2], [1, 3],
-      [0, 3], [1, 2]
-    ];
-    
-    matchPairings.forEach(([idxHome, idxAway]) => {
-      const home = groupTeams[idxHome];
-      const away = groupTeams[idxAway];
-      const matchId = `G_${letter}_${home.id}_${away.id}`; // deterministic ID matching Scenario Editor!
-      const m = executeMatchWithLogic(matchId, home, away, 'GROUP', letter);
-      groupMatches.push(m);
-      matches.push(m);
-    });
-    
-    // Clear suspensions after this group round matches
-    tickSuspensions(playersDb);
-    
     groupStandings[letter] = calculateGroupStandings(
       groupTeams.map(t => t.id),
-      groupMatches
+      groupMatchesByLetter[letter]
     );
   });
   

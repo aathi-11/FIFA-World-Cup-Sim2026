@@ -230,7 +230,8 @@ export const TournamentSimulator: React.FC<TournamentSimulatorProps> = ({
       // Log Monte Carlo simulation probabilities to Supabase user_simulations table in the background
       supabase.from('user_simulations').insert({
         champion_probabilities: newProbs,
-        locked_matches_count: lockedCount
+        locked_matches_count: lockedCount,
+        simulation_runs: runs
       }).then(({ error }) => {
         if (error) console.error('Error logging simulation run to Supabase:', error.message);
         else console.log('Successfully saved Monte Carlo results to Supabase!');

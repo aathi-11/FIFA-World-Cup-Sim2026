@@ -114,6 +114,74 @@ function App() {
         });
         return next;
       });
+
+      // Batch upsert live match results to Supabase
+      const matchInserts: any[] = [];
+      results.forEach(res => {
+        const matchId = res.matchId;
+        const existingMatch = lockedMatches[matchId];
+        let homeTeamId = existingMatch?.homeTeamId || '';
+        let awayTeamId = existingMatch?.awayTeamId || '';
+        
+        if (!homeTeamId || !awayTeamId) {
+          const parts = matchId.split('_');
+          if (parts[0] === 'G' && parts.length >= 4) {
+            homeTeamId = parts[2];
+            awayTeamId = parts.slice(3).join('_');
+          }
+        }
+        if (!homeTeamId || !awayTeamId) return;
+
+        const homeTeam = teams.find(t => t.id === homeTeamId);
+        const awayTeam = teams.find(t => t.id === awayTeamId);
+        const homeSquad = playersDb[homeTeamId] || [];
+        const awaySquad = playersDb[awayTeamId] || [];
+        
+        let probs = { homeWin: 0.35, awayWin: 0.35, draw: 0.30 };
+        let predictedWinner = 'DRAW';
+        if (homeTeam && awayTeam) {
+          probs = getEnsembleProbabilities(homeTeam, homeSquad, awayTeam, awaySquad, !matchId.startsWith('G_'), 0);
+          let maxProb = probs.draw;
+          if (probs.homeWin > maxProb) {
+            predictedWinner = homeTeamId;
+            maxProb = probs.homeWin;
+          }
+          if (probs.awayWin > probs.homeWin && probs.awayWin > probs.draw) {
+            predictedWinner = awayTeamId;
+            maxProb = probs.awayWin;
+          }
+        }
+
+        let winnerId: string | null = null;
+        if (res.homeGoals > res.awayGoals) winnerId = homeTeamId;
+        else if (res.awayGoals > res.homeGoals) winnerId = awayTeamId;
+        else if (res.shootoutHome !== null && res.shootoutAway !== null && res.shootoutHome !== undefined && res.shootoutAway !== undefined) {
+          winnerId = res.shootoutHome > res.shootoutAway ? homeTeamId : awayTeamId;
+        }
+
+        matchInserts.push({
+          match_id: matchId,
+          home_team_id: homeTeamId,
+          away_team_id: awayTeamId,
+          goals_home: res.homeGoals,
+          goals_away: res.awayGoals,
+          shootout_goals_home: res.shootoutHome ?? null,
+          shootout_goals_away: res.shootoutAway ?? null,
+          winner_id: winnerId,
+          real_played: true,
+          pre_match_prob_home: probs.homeWin,
+          pre_match_prob_away: probs.awayWin,
+          pre_match_prob_draw: probs.draw,
+          pre_match_predicted_winner: predictedWinner
+        });
+      });
+
+      if (matchInserts.length > 0) {
+        supabase.from('match_results').upsert(matchInserts).then(({ error }) => {
+          if (error) console.error('Error batch upserting live match results to Supabase:', error.message);
+          else console.log(`Successfully synced ${matchInserts.length} match results to Supabase.`);
+        });
+      }
     }
     if (type === 'performances') {
       const d = data as { performances?: PlayerPerformance[] };
@@ -123,6 +191,8 @@ function App() {
       // Permanent player ratings update based on match performances!
       setPlayersDb(prevDb => {
         const nextDb = { ...prevDb };
+        const playerUpserts: any[] = [];
+        
         perfs.forEach(pPerf => {
           const teamId = pPerf.team;
           const squad = nextDb[teamId];
@@ -141,18 +211,49 @@ function App() {
                 if (pPerf.assists > 0) ratingDelta += Math.round(pPerf.assists * 0.5);
 
                 const nextRating = Math.max(45, Math.min(98, player.rating + ratingDelta));
+                const newGoals = (player.goalsScored || 0) + pPerf.goals;
+                const newAssists = (player.assists || 0) + pPerf.assists;
+                const newCleanSheets = (player.cleanSheets || 0) + (player.position === 'GK' && pPerf.goals === 0 ? 1 : 0);
+                const newSaves = (player.saves || 0) + (player.position === 'GK' ? 3 : 0);
+
+                playerUpserts.push({
+                  player_id: player.id,
+                  team_id: teamId,
+                  player_name: player.name,
+                  rating: nextRating,
+                  form: pPerf.formMultiplier,
+                  injured: pPerf.injured ?? player.injured,
+                  suspended: pPerf.redCard ?? player.suspended,
+                  goals_scored: newGoals,
+                  assists: newAssists,
+                  clean_sheets: newCleanSheets,
+                  saves: newSaves
+                });
+
                 return {
                   ...player,
                   rating: nextRating,
                   injured: pPerf.injured ?? player.injured,
                   suspended: pPerf.redCard ?? player.suspended,
-                  form: pPerf.formMultiplier
+                  form: pPerf.formMultiplier,
+                  goalsScored: newGoals,
+                  assists: newAssists,
+                  cleanSheets: newCleanSheets,
+                  saves: newSaves
                 };
               }
               return player;
             });
           }
         });
+
+        if (playerUpserts.length > 0) {
+          supabase.from('player_states').upsert(playerUpserts).then(({ error }) => {
+            if (error) console.error('Error batch upserting player states to Supabase:', error.message);
+            else console.log(`Successfully synced ${playerUpserts.length} player states to Supabase.`);
+          });
+        }
+
         return nextDb;
       });
     }
@@ -163,16 +264,32 @@ function App() {
 
       // Permanently update baseline and current ELO in teams state!
       setTeams(prevTeams => {
-        return prevTeams.map(t => {
+        const teamUpserts: any[] = [];
+        const updated = prevTeams.map(t => {
           if (newElos[t.id]) {
+            const nextElo = newElos[t.id];
+            teamUpserts.push({
+              team_id: t.id,
+              elo: nextElo,
+              recent_form: t.recentForm
+            });
             return {
               ...t,
-              elo: newElos[t.id],
-              baselineElo: newElos[t.id]
+              elo: nextElo,
+              baselineElo: nextElo
             };
           }
           return t;
         });
+
+        if (teamUpserts.length > 0) {
+          supabase.from('team_states').upsert(teamUpserts).then(({ error }) => {
+            if (error) console.error('Error batch upserting team Elos to Supabase:', error.message);
+            else console.log(`Successfully synced ${teamUpserts.length} team Elo ratings to Supabase.`);
+          });
+        }
+
+        return updated;
       });
     }
     if (type === 'injuries') {
@@ -184,6 +301,7 @@ function App() {
       // Permanently mark injured/suspended players in playersDb!
       setPlayersDb(prevDb => {
         const nextDb = { ...prevDb };
+        const playerUpserts: any[] = [];
         
         // Reset all player injuries/suspensions first for full sync reliability
         Object.keys(nextDb).forEach(teamId => {
@@ -202,7 +320,21 @@ function App() {
           if (squad) {
             nextDb[teamId] = squad.map(p => {
               if (p.name.toLowerCase() === inj.playerName.toLowerCase()) {
-                return { ...p, injured: true, form: 0.0 };
+                const nextP = { ...p, injured: true, form: 0.0 };
+                playerUpserts.push({
+                  player_id: nextP.id,
+                  team_id: teamId,
+                  player_name: nextP.name,
+                  rating: nextP.rating,
+                  form: nextP.form,
+                  injured: nextP.injured,
+                  suspended: nextP.suspended,
+                  goals_scored: nextP.goalsScored || 0,
+                  assists: nextP.assists || 0,
+                  clean_sheets: nextP.cleanSheets || 0,
+                  saves: nextP.saves || 0
+                });
+                return nextP;
               }
               return p;
             });
@@ -215,17 +347,39 @@ function App() {
           if (squad) {
             nextDb[teamId] = squad.map(p => {
               if (p.name.toLowerCase() === susp.playerName.toLowerCase()) {
-                return { 
+                const nextP = { 
                   ...p, 
                   suspended: true, 
                   suspensionRoundsRemaining: susp.matchesMissed, 
                   form: 0.0 
                 };
+                playerUpserts.push({
+                  player_id: nextP.id,
+                  team_id: teamId,
+                  player_name: nextP.name,
+                  rating: nextP.rating,
+                  form: nextP.form,
+                  injured: nextP.injured,
+                  suspended: nextP.suspended,
+                  goals_scored: nextP.goalsScored || 0,
+                  assists: nextP.assists || 0,
+                  clean_sheets: nextP.cleanSheets || 0,
+                  saves: nextP.saves || 0
+                });
+                return nextP;
               }
               return p;
             });
           }
         });
+
+        if (playerUpserts.length > 0) {
+          supabase.from('player_states').upsert(playerUpserts).then(({ error }) => {
+            if (error) console.error('Error batch upserting injury player states to Supabase:', error.message);
+            else console.log(`Successfully synced ${playerUpserts.length} injury/suspension player states to Supabase.`);
+          });
+        }
+
         return nextDb;
       });
     }
@@ -235,15 +389,31 @@ function App() {
       
       // Permanently update team forms in the teams state!
       setTeams(prevTeams => {
-        return prevTeams.map(t => {
+        const teamUpserts: any[] = [];
+        const updated = prevTeams.map(t => {
           if (forms[t.id]) {
+            const nextForm = forms[t.id];
+            teamUpserts.push({
+              team_id: t.id,
+              elo: t.elo,
+              recent_form: nextForm
+            });
             return {
               ...t,
-              recentForm: forms[t.id]
+              recentForm: nextForm
             };
           }
           return t;
         });
+
+        if (teamUpserts.length > 0) {
+          supabase.from('team_states').upsert(teamUpserts).then(({ error }) => {
+            if (error) console.error('Error batch upserting team forms to Supabase:', error.message);
+            else console.log(`Successfully synced ${teamUpserts.length} team recent forms to Supabase.`);
+          });
+        }
+
+        return updated;
       });
     }
   };
@@ -524,6 +694,30 @@ function App() {
             });
 
             return nextDb;
+          });
+        }
+
+        // 3. Fetch team states overrides
+        const { data: dbTeams, error: teamsError } = await supabase
+          .from('team_states')
+          .select('*');
+
+        if (teamsError) {
+          console.warn('Could not load team states from Supabase:', teamsError.message);
+        } else if (dbTeams && dbTeams.length > 0) {
+          setTeams(prevTeams => {
+            return prevTeams.map(t => {
+              const dbT = dbTeams.find((x: any) => x.team_id === t.id);
+              if (dbT) {
+                return {
+                  ...t,
+                  elo: dbT.elo ?? t.elo,
+                  baselineElo: dbT.elo ?? t.baselineElo,
+                  recentForm: dbT.recent_form ?? t.recentForm
+                };
+              }
+              return t;
+            });
           });
         }
       } catch (err) {

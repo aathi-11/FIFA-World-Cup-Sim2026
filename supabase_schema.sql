@@ -4,9 +4,15 @@
 -- Dashboard: https://supabase.com/dashboard/project/iujcxgscmpbvnqipddjf/sql
 -- ============================================================
 
+-- Drop old mismatched tables to reset schema correctly
+DROP TABLE IF EXISTS match_results CASCADE;
+DROP TABLE IF EXISTS player_states CASCADE;
+DROP TABLE IF EXISTS user_simulations CASCADE;
+DROP TABLE IF EXISTS team_states CASCADE;
+
 -- 1. Match Results Table
 -- Stores locked/real match scorelines for persistence across sessions
-CREATE TABLE IF NOT EXISTS match_results (
+CREATE TABLE match_results (
   id BIGSERIAL PRIMARY KEY,
   match_id TEXT UNIQUE NOT NULL,
   home_team_id TEXT NOT NULL,
@@ -27,7 +33,7 @@ CREATE TABLE IF NOT EXISTS match_results (
 
 -- 2. Player States Table
 -- Stores custom player ratings, form, injuries, suspensions, goals and assists
-CREATE TABLE IF NOT EXISTS player_states (
+CREATE TABLE player_states (
   id BIGSERIAL PRIMARY KEY,
   player_id TEXT UNIQUE NOT NULL,
   team_id TEXT NOT NULL,
@@ -46,12 +52,23 @@ CREATE TABLE IF NOT EXISTS player_states (
 
 -- 3. User Simulations Table
 -- Logs every Monte Carlo simulation run for history tracking
-CREATE TABLE IF NOT EXISTS user_simulations (
+CREATE TABLE user_simulations (
   id BIGSERIAL PRIMARY KEY,
   champion_probabilities JSONB NOT NULL DEFAULT '{}'::JSONB,
   locked_matches_count INTEGER NOT NULL DEFAULT 0,
   simulation_runs INTEGER NOT NULL DEFAULT 1000,
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. Team States Table
+-- Stores custom team Elo and recent form
+CREATE TABLE team_states (
+  id BIGSERIAL PRIMARY KEY,
+  team_id TEXT UNIQUE NOT NULL,
+  elo INTEGER,
+  recent_form TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================
@@ -62,11 +79,13 @@ CREATE TABLE IF NOT EXISTS user_simulations (
 ALTER TABLE match_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_simulations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE team_states ENABLE ROW LEVEL SECURITY;
 
 -- Policies: Allow all operations for anon role (public app, no auth needed)
 CREATE POLICY "Allow all for anon" ON match_results FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON player_states FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON user_simulations FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all for anon" ON team_states FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- ============================================================
 -- Updated_at auto-update trigger
@@ -87,11 +106,15 @@ CREATE OR REPLACE TRIGGER player_states_updated_at
   BEFORE UPDATE ON player_states
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+CREATE OR REPLACE TRIGGER team_states_updated_at
+  BEFORE UPDATE ON team_states
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 -- ============================================================
 -- Verify tables were created correctly
 -- ============================================================
 SELECT table_name, column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'public'
-  AND table_name IN ('match_results', 'player_states', 'user_simulations')
+  AND table_name IN ('match_results', 'player_states', 'user_simulations', 'team_states')
 ORDER BY table_name, ordinal_position;

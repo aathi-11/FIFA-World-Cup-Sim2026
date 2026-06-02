@@ -883,13 +883,7 @@ function App() {
         {renderActiveTabContent()}
       </main>
 
-      {/* Footer */}
-      <footer className="footer">
-        <p>© 2026 Antigravity FIFA World Cup Predictor. Running on React + TypeScript.</p>
-        <p style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          Simulation Engine calibrated at &ge;20% match classification error rate to respect football entropy (upset factor).
-        </p>
-      </footer>
+
     </div>
   );
 }

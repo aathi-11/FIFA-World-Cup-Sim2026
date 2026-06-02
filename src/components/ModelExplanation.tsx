@@ -90,8 +90,46 @@ export const ModelExplanation: React.FC = () => {
             color: var(--text-muted);
           }
           @media (max-width: 768px) {
-            .flow-grid-4, .flow-grid-3 {
-              grid-template-columns: 1fr;
+            .flow-grid-4 {
+              grid-template-columns: repeat(2, 1fr) !important;
+              gap: 8px !important;
+            }
+            .flow-grid-3 {
+              grid-template-columns: repeat(3, 1fr) !important;
+              gap: 6px !important;
+            }
+            .flow-node {
+              padding: 8px 10px !important;
+              border-radius: 6px !important;
+            }
+            .flow-node-header {
+              font-size: 0.8rem !important;
+            }
+            .flow-node-sub {
+              font-size: 0.65rem !important;
+            }
+            .flow-node div {
+              font-size: 0.72rem !important;
+            }
+            .flow-node div[style*="font-size: 0.68rem"] {
+              font-size: 0.6rem !important;
+            }
+            .flow-node div[style*="font-size: 0.85rem"] {
+              font-size: 0.75rem !important;
+            }
+          }
+          @media (max-width: 480px) {
+            .flow-grid-3 {
+              gap: 4px !important;
+            }
+            .flow-grid-4 {
+              gap: 6px !important;
+            }
+            .flow-node-header {
+              font-size: 0.72rem !important;
+            }
+            .flow-node-sub {
+              font-size: 0.58rem !important;
             }
           }
         ` }} />
